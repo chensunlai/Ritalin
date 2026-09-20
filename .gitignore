@@ -1,0 +1,11 @@
+/codex-ritalin
+/codex-ritalin.exe
+/dist/
+/.codex/
+/ritalin/
+/.testdata/
+*.pem
+auth.json
+config.json
+*.log
+.DS_Store
