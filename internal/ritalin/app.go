@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func codexCommand(c Config, args []string) (*exec.Cmd, error) {
@@ -56,6 +57,7 @@ func Run(args []string) (int, error) {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	startup(os.Stderr, s, c, time.Sleep)
 	if e = cmd.Start(); e != nil {
 		return 1, e
 	}
