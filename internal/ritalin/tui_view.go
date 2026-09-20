@@ -201,7 +201,14 @@ func (m *ui) workBody(l dashboardLayout) (string, string) {
 	}
 	if m.review != "" {
 		if s := findState(&m.c, m.review); s != nil {
-			return m.t("审核结果"), wrap(m.t("打开 HTML 或图片后选择：")) + "\n\n" + wrap("HTML: "+safeText(s.HTML)) + "\n\n" + wrap("PNG: "+safeText(s.PNG)) + "\n\n" + uiAccent.Render(m.t("[g] 保留   [b] 删除   [s] 稍后"))
+			preview := m.t("[p] 生成图片预览（可选）")
+			if s.PNG != "" {
+				preview = "PNG: " + safeText(s.PNG)
+			}
+			if m.preview != nil {
+				preview = m.t("正在生成预览…")
+			}
+			return m.t("审核结果"), wrap(m.t("打开 HTML 后选择：")) + "\n\n" + wrap("HTML: "+safeText(s.HTML)) + "\n\n" + wrap(preview) + "\n\n" + uiAccent.Render(wrap(m.t("[g] 保留   [b] 删除   [s] 稍后")))
 		}
 	}
 	if m.details && l.detail == 0 {
@@ -250,6 +257,9 @@ func (m *ui) detailBody(width int) string {
 			add("状态", m.stateStatus(s.Status))
 			add("模型", s.Model)
 			hint := m.t("Enter 开始")
+			if s.Status == "review" && s.HTML != "" {
+				hint = m.t("Enter 审核")
+			}
 			if e.action == "select" {
 				hint = m.t("Enter 使用")
 				if m.c.Active == s.ID && m.c.Replace {
@@ -273,7 +283,7 @@ func (m *ui) detailBody(width int) string {
 		text = "探测已保存节点，收集候选状态。"
 		value = fmt.Sprintf("%d %s", len(m.c.Nodes), m.t("节点"))
 	case "batch":
-		text = "逐个生成动画与截图，完成后由你选择保留或删除。"
+		text = "逐个生成动画，完成后由你选择保留或删除。"
 		value = fmt.Sprintf("%d %s", m.pendingCount(), m.t("待确认"))
 	case "manual":
 		text = "粘贴已有状态即可加入列表。"

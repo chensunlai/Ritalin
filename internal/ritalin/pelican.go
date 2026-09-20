@@ -128,14 +128,6 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	}
 	if state.HTML != "" {
 		if _, e := os.Stat(state.HTML); e == nil {
-			if state.PNG == "" {
-				state.PNG = filepath.Join(filepath.Dir(state.HTML), "pelican.png")
-			}
-			if _, e = os.Stat(state.PNG); e != nil {
-				if e = render(ctx, s, *c, state.HTML, state.PNG, emit); e != nil {
-					return e
-				}
-			}
 			state.Status = "review"
 			return s.Save(*c)
 		}
@@ -341,16 +333,8 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	if e = atomicWrite(state.HTML, []byte(html), 0600); e != nil {
 		return e
 	}
-	state.PNG = filepath.Join(dir, "pelican.png")
+	state.PNG = ""
 	state.Status = "review"
 	state.LastError = ""
-	if e = s.Save(*c); e != nil {
-		return e
-	}
-	if e = render(ctx, s, *c, state.HTML, state.PNG, emit); e != nil {
-		state.LastError = "渲染失败，可恢复重试"
-		_ = s.Save(*c)
-		return e
-	}
 	return s.Save(*c)
 }

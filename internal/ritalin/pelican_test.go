@@ -140,8 +140,8 @@ func TestPelicanOutcomesAndResume(t *testing.T) {
 					t.Fatal("failure must preserve candidate", e)
 				}
 			case "html", "retry":
-				if e == nil || c.States[0].HTML == "" || c.States[0].Status != "review" {
-					t.Fatal("render failure must preserve HTML", e)
+				if e != nil || c.States[0].HTML == "" || c.States[0].Status != "review" || c.States[0].PNG != "" {
+					t.Fatal("HTML must be reviewable without a browser", e)
 				}
 				if _, e := os.Stat(c.States[0].HTML); e != nil {
 					t.Fatal(e)

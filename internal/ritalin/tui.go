@@ -66,6 +66,7 @@ type ui struct {
 	probeIDs                         []string
 	confirmFn                        func()
 	frame                            int
+	preview                          *previewTask
 }
 
 func runTUI(s *Store, c Config) error {
@@ -82,6 +83,7 @@ func runTUI(s *Store, c Config) error {
 	}
 	defer lock.Unlock()
 	m := newUI(s, c)
+	defer m.cancelPreview()
 	_, e = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	if m.cancel != nil {
 		m.cancel()
@@ -251,6 +253,10 @@ func (m *ui) nextTrial() tea.Cmd {
 	for _, s := range m.c.States {
 		if s.Status != "usable" {
 			id := s.ID
+			if s.Status == "review" && s.HTML != "" {
+				m.review = id
+				return nil
+			}
 			return m.start("pelican", id, func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
 				return nil, pelican(ctx, m.store, c, id, emit)
 			})
@@ -402,6 +408,10 @@ func (m *ui) activate(e entry) tea.Cmd {
 	case "trial":
 		id := e.id
 		m.batch = false
+		if s := findState(&m.c, id); s != nil && s.Status == "review" && s.HTML != "" {
+			m.review = id
+			return nil
+		}
 		return m.start("pelican", id, func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
 			return nil, pelican(ctx, m.store, c, id, emit)
 		})
@@ -503,6 +513,8 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.nextTrial()
 			}
 		}
+	case previewDone:
+		m.finishPreview(v)
 	case tea.KeyMsg:
 		key := v.String()
 		if m.warning {
@@ -627,6 +639,9 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.review != "" {
+			if key == "p" {
+				return m, m.startPreview()
+			}
 			if key == "up" || key == "down" {
 				if key == "up" {
 					m.bodyOffset = max(0, m.bodyOffset-1)
@@ -636,6 +651,7 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if key == "g" || key == "b" {
+				m.cancelPreview()
 				if key == "g" {
 					if s := findState(&m.c, m.review); s != nil {
 						s.Status = "usable"
@@ -650,6 +666,7 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if key == "esc" || key == "s" {
+				m.cancelPreview()
 				m.review = ""
 				m.batch = false
 				m.notice = m.t("保留待确认结果，下次可继续")
