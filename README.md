@@ -10,8 +10,6 @@ When a state is selected, Ritalin replaces the existing `x-codex-turn-state` hea
 Codex → Ritalin → OpenAI
 ```
 
-Turn replacement off to run a comparison through the same connection.
-
 ## Install
 
 Install and log in to Codex first. These scripts download the latest binary and detect your platform automatically. Run the same command again to update.
