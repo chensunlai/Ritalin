@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -73,6 +74,7 @@ func browserPath(ctx context.Context, s *Store, c Config, emit Emit) (string, er
 	emit(uiText(c.Language, "准备截图引擎…"))
 	b := launcher.NewBrowser()
 	b.RootDir = filepath.Join(s.Root, "browser")
+	configureBrowserDownload(b, runtime.GOOS, runtime.GOARCH)
 	b.Context = ctx
 	b.Logger = log.New(io.Discard, "", 0)
 	b.HTTPClient = &http.Client{Transport: systemTransport(), Timeout: 10 * time.Minute}
