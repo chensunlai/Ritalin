@@ -16,6 +16,9 @@ func TestPelicanHelper(t *testing.T) {
 	if mode == "" {
 		return
 	}
+	if want := os.Getenv("RITALIN_TEST_EXPECT_HOME"); want != "" && os.Getenv("CODEX_HOME") != want {
+		os.Exit(16)
+	}
 	if mode == "error" {
 		os.Exit(9)
 	}
@@ -211,6 +214,44 @@ func TestPelicanOutcomesAndResume(t *testing.T) {
 						t.Fatal("credentials exposed")
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestPelicanUsesCurrentLoginAcrossAccounts(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(fmt.Sprint("explicit-home=", explicit), func(t *testing.T) {
+			t.Setenv("RITALIN_TEST_PELICAN", "html")
+			t.Setenv("CODEX_CA_CERTIFICATE", "")
+			t.Setenv("SSL_CERT_FILE", "")
+			home := t.TempDir()
+			t.Setenv("RITALIN_TEST_EXPECT_HOME", home)
+			if err := atomicWrite(filepath.Join(home, "auth.json"), []byte(`{"tokens":{"access_token":"synthetic-token","account_id":"different-account"}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			s := &Store{Home: home, Root: t.TempDir()}
+			c := Defaults()
+			if explicit {
+				c.ProbeHome = home
+				s.Home = filepath.Join(t.TempDir(), "missing-default-login")
+			}
+			bin, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Command = []string{bin, "-test.run=^TestPelicanHelper$", "--"}
+			c.States = []State{{ID: "cross-account", Value: syntheticState(), Status: "pending", Model: "synthetic-model", AuthHome: filepath.Join(t.TempDir(), "missing-original-login"), AccountHash: hash("original-account")}}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := pelican(ctx, s, &c, "cross-account", func(string) {}); err != nil {
+				t.Fatal("cross-account test was blocked", err)
+			}
+			if c.States[0].Status != "review" || c.States[0].HTML == "" {
+				t.Fatal("test did not finish")
+			}
+			if c.States[0].AccountHash != hash("original-account") {
+				t.Fatal("provenance was rewritten")
 			}
 		})
 	}

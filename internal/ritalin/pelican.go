@@ -159,16 +159,11 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			return s.Save(*c)
 		}
 	}
-	home := state.AuthHome
-	if home == "" {
-		home = probeHome(s, *c)
-	}
+	// A candidate's provenance is informational; tests use the current login.
+	home := probeHome(s, *c)
 	a, e := readAuth(home)
 	if e != nil {
 		return e
-	}
-	if state.AccountHash != "" && state.AccountHash != hash(a.Account) {
-		return errors.New("此候选的原账号与当前凭证不同；请恢复原账号后再测")
 	}
 	dir, e := s.runDir("pelican")
 	if e != nil {
