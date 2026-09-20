@@ -52,6 +52,7 @@ type Config struct {
 	Effort        string   `json:"pelican_effort"`
 	Browser       string   `json:"browser_path,omitempty"`
 	Mihomo        string   `json:"mihomo_path,omitempty"`
+	Upstream      string   `json:"warp_upstream,omitempty"`
 	Replace       bool     `json:"replace"`
 	KeywordFilter bool     `json:"keyword_filter"`
 	Active        string   `json:"active_state,omitempty"`
