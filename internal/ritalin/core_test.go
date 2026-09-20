@@ -1,11 +1,49 @@
 package ritalin
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestLiveModelsOptIn(t *testing.T) {
+	p := os.Getenv("RITALIN_TEST_PROXY")
+	if p == "" {
+		t.Skip("set RITALIN_TEST_PROXY for credential-free models check")
+	}
+	r, e := reachable(context.Background(), p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	t.Log(r)
+}
+func TestMihomoLifecycleOptIn(t *testing.T) {
+	bin := os.Getenv("RITALIN_TEST_MIHOMO")
+	if bin == "" {
+		t.Skip("set RITALIN_TEST_MIHOMO for real child-process lifecycle check")
+	}
+	s := &Store{Root: t.TempDir()}
+	c := Defaults()
+	c.Mihomo = bin
+	n := Node{ID: "synthetic", Kind: "clash", Clash: map[string]any{"name": "test", "type": "http", "server": "127.0.0.1", "port": 9}}
+	run, e := startClash(context.Background(), s, c, []Node{n}, func(string) {})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if run.URLs[n.ID] == "" {
+		t.Fatal("no listener")
+	}
+	run.Close()
+	files, e := os.ReadDir(filepath.Join(s.Root, "clash"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(files) != 0 {
+		t.Fatal("private runtime config not cleaned")
+	}
+}
 
 func TestStateMetricsAndFilters(t *testing.T) {
 	for _, tt := range []struct {

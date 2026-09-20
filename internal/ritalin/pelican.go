@@ -70,7 +70,7 @@ func browserPath(ctx context.Context, s *Store, c Config, emit Emit) (string, er
 	if bin, ok := launcher.LookPath(); ok {
 		return bin, nil
 	}
-	emit("未发现浏览器，下载独立 Chromium 到 ritalin/browser（使用系统代理）…")
+	emit("首次准备截图引擎（使用系统代理下载），之后自动复用…")
 	b := launcher.NewBrowser()
 	b.RootDir = filepath.Join(s.Root, "browser")
 	b.Context = ctx
@@ -79,6 +79,7 @@ func browserPath(ctx context.Context, s *Store, c Config, emit Emit) (string, er
 	return b.Get()
 }
 func render(ctx context.Context, s *Store, c Config, htmlPath, pngPath string, emit Emit) error {
+	emit("正在渲染图片…")
 	bin, e := browserPath(ctx, s, c, emit)
 	if e != nil {
 		return e
@@ -90,8 +91,8 @@ func render(ctx context.Context, s *Store, c Config, htmlPath, pngPath string, e
 		return e
 	}
 	defer os.RemoveAll(profile)
-	l := launcher.New().Context(ctx).Bin(bin).Headless(true).Leakless(false).UserDataDir(profile).Set("disable-gpu").Set("disable-dev-shm-usage").Env(cleanProxyEnv(os.Environ())...)
-	// Retain Chromium sandbox. Never silently retry with --no-sandbox.
+	l := launcher.New().Context(ctx).Bin(bin).Headless(true).NoSandbox(c.BrowserNoSandbox).Leakless(false).UserDataDir(profile).Set("disable-gpu").Set("disable-dev-shm-usage").Env(cleanProxyEnv(os.Environ())...)
+	// Retain Chromium sandbox unless the user explicitly opts out in settings.
 	control, e := l.Launch()
 	if e != nil {
 		return fmt.Errorf("浏览器启动失败；可在设置中指定已安装的 Chrome/Chromium: %w", e)
@@ -213,7 +214,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return e
 	}
 	defer w.Close()
-	args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "-m", model, "-c", "model_reasoning_effort=" + fmt.Sprintf("%q", c.Effort), "-C", filepath.Join(s.Root, "pelican"), "-"}
+	args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "-m", model, "-c", "model_reasoning_effort=" + fmt.Sprintf("%q", c.Effort), "-c", `cli_auth_credentials_store="file"`, "-C", filepath.Join(s.Root, "pelican"), "-"}
 	cmd, e := codexCommand(*c, args)
 	if e != nil {
 		return e
@@ -242,6 +243,8 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return e
 	}
 	done := make(chan struct{})
+	var doneOnce sync.Once
+	stopWatcher := func() { doneOnce.Do(func() { close(done) }) }
 	go func() {
 		select {
 		case <-runctx.Done():
@@ -249,7 +252,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		case <-done:
 		}
 	}()
-	defer close(done)
+	defer stopWatcher()
 	events, e := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
 		stopBackground(cmd)
@@ -266,8 +269,9 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	emit("鹈鹕测试：" + state.ID + " · " + model + " / " + c.Effort + "（系统代理）")
 	for sc.Scan() {
 		var ev struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
+			Type    string          `json:"type"`
+			Message string          `json:"message"`
+			Error   json.RawMessage `json:"error"`
 			Item    struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -277,7 +281,24 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			continue
 		}
 		msg := strings.ReplaceAll(ev.Message, a.Token, "[REDACTED]")
-		msg = strings.ReplaceAll(msg, a.Account, "[ACCOUNT]")
+		if len(ev.Error) > 0 {
+			var detail struct {
+				Message string `json:"message"`
+				Code    string `json:"code"`
+			}
+			if json.Unmarshal(ev.Error, &detail) == nil {
+				msg += " " + detail.Code + " " + detail.Message
+			} else {
+				var text string
+				if json.Unmarshal(ev.Error, &text) == nil {
+					msg += " " + text
+				}
+			}
+		}
+		msg = strings.ReplaceAll(msg, a.Token, "[REDACTED]")
+		if a.Account != "" {
+			msg = strings.ReplaceAll(msg, a.Account, "[ACCOUNT]")
+		}
 		if e = enc.Encode(map[string]any{"at": stamp(), "elapsed_seconds": time.Since(started).Seconds(), "type": ev.Type, "item_type": ev.Item.Type, "message": msg}); e != nil {
 			errorLog = e
 		}
@@ -297,12 +318,13 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		if ev.Item.Text != "" && !streamed.Load() {
 			display(ev.Item.Text + "\n")
 		}
-		if ev.Message != "" {
+		if strings.TrimSpace(msg) != "" {
 			emit("Codex: " + safeText(msg))
 		}
 	}
 	scanErr = sc.Err()
 	waitErr := cmd.Wait()
+	stopWatcher()
 	meta := map[string]any{"state_id": id, "model": model, "effort": c.Effort, "started": started.UTC().Format(time.RFC3339), "seconds": time.Since(started).Seconds(), "keyword_rejected": filtered.Load(), "cancelled": ctx.Err() != nil, "automatic_retries": "Codex controlled; emitted error/retry events recorded"}
 	if e = s.Record(dir, "attempt.json", meta); e != nil {
 		return e

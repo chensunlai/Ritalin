@@ -127,6 +127,7 @@ func (m *ui) entries() []entry {
 	case 5:
 		cmd, _ := json.Marshal(m.c.Command)
 		out = []entry{{"Codex 命令（JSON argv）：" + string(cmd), "command", ""}, {"探测 HOME：" + probeHome(m.store, m.c), "home", ""}, {"探测模型：" + m.c.Model, "model", ""}, {"鹈鹕推理强度：" + m.c.Effort, "effort", ""}, {"浏览器路径（空白自动）：" + m.c.Browser, "browser", ""}, {"Mihomo 路径（空白自动）：" + m.c.Mihomo, "mihomo", ""}, {"日常 warp 上游（空白=系统代理）：" + m.c.Upstream, "upstream", ""}}
+		out = append(out, entry{fmt.Sprintf("无沙箱渲染：%t（安全风险，默认关闭）", m.c.BrowserNoSandbox), "browser-sandbox", ""})
 	}
 	return out
 }
@@ -236,6 +237,13 @@ func (m *ui) applyForm() tea.Cmd {
 }
 func (m *ui) activate(e entry) tea.Cmd {
 	switch e.action {
+	case "browser-sandbox":
+		if m.c.BrowserNoSandbox {
+			m.c.BrowserNoSandbox = false
+			m.save()
+		} else {
+			m.ask("确认关闭 Chromium 沙箱？仅用于无法启用沙箱的隔离环境；JS/外部资源仍阻止。", func() { m.c.BrowserNoSandbox = true; m.save() })
+		}
 	case "import":
 		title := "粘贴代理列表（每行一个）或本地文件路径"
 		if e.id == "clash" {
@@ -545,7 +553,8 @@ func (m *ui) View() string {
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		b.WriteString(fmt.Sprintf("%s %s · 已等待 %s · Esc 取消并保留进度\n", frames[m.frame%len(frames)], m.lastJob, elapsed))
 		if elapsed >= 5*time.Second {
-			b.WriteString("进度持续更新；连接等待阶段无确定总量，下载开始后显示字节进度。\n")
+			pulse := m.frame % 20
+			b.WriteString("[" + strings.Repeat("░", pulse) + "█" + strings.Repeat("░", 19-pulse) + "]  等待/处理中；下载开始后显示字节进度。\n")
 		}
 		b.WriteString(m.viewport.View())
 		return b.String()

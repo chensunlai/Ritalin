@@ -21,6 +21,7 @@ type Node struct {
 	Clash   map[string]any `json:"clash,omitempty"`
 	Checked string         `json:"checked,omitempty"`
 	Reach   []string       `json:"reach,omitempty"`
+	ExitIP  string         `json:"exit_ip,omitempty"`
 }
 type Metrics struct {
 	Characters   int    `json:"characters"`
@@ -31,33 +32,35 @@ type Metrics struct {
 	Timestamp    uint64 `json:"timestamp"`
 }
 type State struct {
-	ID          string  `json:"id"`
-	Value       string  `json:"value"`
-	Node        string  `json:"node"`
-	Created     string  `json:"created"`
-	Status      string  `json:"status"` // pending, review, usable
-	Metrics     Metrics `json:"metrics"`
-	AuthHome    string  `json:"auth_home"`
-	AccountHash string  `json:"account_hash"`
-	Model       string  `json:"model"`
-	HTML        string  `json:"html,omitempty"`
-	PNG         string  `json:"png,omitempty"`
-	LastError   string  `json:"last_error,omitempty"`
+	ID             string  `json:"id"`
+	Value          string  `json:"value"`
+	Node           string  `json:"node"`
+	Created        string  `json:"created"`
+	Status         string  `json:"status"` // pending, review, usable
+	Metrics        Metrics `json:"metrics"`
+	AuthHome       string  `json:"auth_home"`
+	AccountHash    string  `json:"account_hash"`
+	Model          string  `json:"model"`
+	ProbeCompleted bool    `json:"probe_completed"`
+	HTML           string  `json:"html,omitempty"`
+	PNG            string  `json:"png,omitempty"`
+	LastError      string  `json:"last_error,omitempty"`
 }
 type Config struct {
-	Version       int      `json:"version"`
-	Command       []string `json:"codex_command"`
-	ProbeHome     string   `json:"probe_codex_home,omitempty"`
-	Model         string   `json:"probe_model,omitempty"`
-	Effort        string   `json:"pelican_effort"`
-	Browser       string   `json:"browser_path,omitempty"`
-	Mihomo        string   `json:"mihomo_path,omitempty"`
-	Upstream      string   `json:"warp_upstream,omitempty"`
-	Replace       bool     `json:"replace"`
-	KeywordFilter bool     `json:"keyword_filter"`
-	Active        string   `json:"active_state,omitempty"`
-	Nodes         []Node   `json:"nodes"`
-	States        []State  `json:"states"`
+	Version          int      `json:"version"`
+	Command          []string `json:"codex_command"`
+	ProbeHome        string   `json:"probe_codex_home,omitempty"`
+	Model            string   `json:"probe_model,omitempty"`
+	Effort           string   `json:"pelican_effort"`
+	Browser          string   `json:"browser_path,omitempty"`
+	BrowserNoSandbox bool     `json:"browser_no_sandbox"`
+	Mihomo           string   `json:"mihomo_path,omitempty"`
+	Upstream         string   `json:"warp_upstream,omitempty"`
+	Replace          bool     `json:"replace"`
+	KeywordFilter    bool     `json:"keyword_filter"`
+	Active           string   `json:"active_state,omitempty"`
+	Nodes            []Node   `json:"nodes"`
+	States           []State  `json:"states"`
 }
 type Store struct{ Home, Root string }
 

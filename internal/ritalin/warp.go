@@ -170,6 +170,11 @@ func startWarp(s *Store, value string, replace, inject bool, upstream string, ob
 		return goproxy.OkConnect, host
 	})
 	p.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		// Trial observation needs uncompressed WS frames; normal Codex stays untouched.
+		if len(observers) > 0 && targetRequest(r) {
+			r.Header.Del("Sec-WebSocket-Extensions")
+			r.Header.Del("Accept-Encoding")
+		}
 		if replace && value != "" && targetRequest(r) && (inject || r.Header.Get(stateHeader) != "") {
 			r.Header.Set(stateHeader, value)
 		}

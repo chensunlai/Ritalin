@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -70,6 +71,30 @@ func reachable(ctx context.Context, proxyURL string) ([]string, error) {
 	}
 	return good, nil
 }
+
+func exitIP(ctx context.Context, proxyURL string) string {
+	tr, e := transport(proxyURL)
+	if e != nil {
+		return ""
+	}
+	cl := &http.Client{Transport: tr, Timeout: 6 * time.Second}
+	defer cl.CloseIdleConnections()
+	req, _ := http.NewRequestWithContext(ctx, "GET", "https://api.ipify.org", nil)
+	resp, e := cl.Do(req)
+	if e != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	b, e := readLimit(resp.Body, 128)
+	if e != nil {
+		return ""
+	}
+	ip := net.ParseIP(strings.TrimSpace(string(b)))
+	if ip == nil {
+		return ""
+	}
+	return ip.String()
+}
 func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, emit Emit) error {
 	var nodes []Node
 	var e error
@@ -114,6 +139,10 @@ func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, e
 		}
 		n.Checked = stamp()
 		n.Reach = reach
+		n.ExitIP = exitIP(ctx, run.URLs[n.ID])
+		if n.ExitIP != "" {
+			emit("当前 IP 回显出口：" + n.ExitIP + "（不代表目标域名必然相同）")
+		}
 		c.Nodes = append(c.Nodes, n)
 		saved[n.ID] = true
 		if e = s.Save(*c); e != nil {

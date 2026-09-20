@@ -128,6 +128,70 @@ func TestObserverFragmentedWebSocket(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestWarpWebSocketUpgrade(t *testing.T) {
+	delta := []byte(`{"type":"response.output_text.delta","delta":"websocket text"}`)
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(stateHeader) != syntheticState() {
+			t.Error("WS request header not replaced")
+		}
+		conn, rw, e := w.(http.Hijacker).Hijack()
+		if e != nil {
+			t.Error(e)
+			return
+		}
+		defer conn.Close()
+		fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n%s: server-original\r\n\r\n", stateHeader)
+		rw.Write(append([]byte{0x81, byte(len(delta))}, delta...))
+		rw.Flush()
+	}))
+	defer origin.Close()
+	observed := make(chan string, 1)
+	warp, e := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, true, "", func(kind, text string) { observed <- text })
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer warp.Close()
+	warp.tr.Proxy = nil
+	warp.tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(origin.URL, "https://"))
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(origin.Certificate())
+	warp.tr.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: "example.com"}
+	ca, _ := os.ReadFile(warp.CA)
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(ca)
+	u, _ := url.Parse(warp.URL)
+	cl := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u), TLSClientConfig: &tls.Config{RootCAs: pool}}, Timeout: 3 * time.Second}
+	defer cl.CloseIdleConnections()
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	resp, e := cl.Do(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 101 || resp.Header.Get(stateHeader) != syntheticState() {
+		t.Fatal("upgrade changed or missing replaced header")
+	}
+	b, e := io.ReadAll(resp.Body)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if string(b[2:]) != string(delta) {
+		t.Fatal("WS payload modified")
+	}
+	select {
+	case text := <-observed:
+		if text != "websocket text" {
+			t.Fatal(text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WS output not streamed")
+	}
+}
 func TestKeywordAndHTML(t *testing.T) {
 	if !keywordRejected("我将使用内嵌 SVG。后续") || keywordRejected("第一句。后续内联") {
 		t.Fatal("first sentence filter")

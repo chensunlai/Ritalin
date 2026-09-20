@@ -151,6 +151,12 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 	r.attempt.HTTP = resp.StatusCode
 	state := resp.Header.Get(stateHeader)
 	r.attempt.HasState = state != ""
+	if state != "" && resp.StatusCode == 200 {
+		if m, err := parseState(state); err == nil {
+			r.attempt.Metrics = &m
+			r.state = &State{ID: newID(), Value: state, Node: n.Name, Created: stamp(), Status: "pending", Metrics: m, AuthHome: home, AccountHash: hash(a.Account), Model: model, LastError: "compact 尚未确认完成"}
+		}
+	}
 	compacted, completed := false, false
 	sc := bufio.NewScanner(io.LimitReader(resp.Body, 8<<20))
 	sc.Buffer(make([]byte, 4096), 2<<20)
@@ -200,9 +206,12 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 	}
 	r.attempt.Metrics = &metrics
 	if !r.attempt.Completed {
-		return finish(errors.New("compact 未完成，未加入候选；事件记录已保留"))
+		return finish(errors.New("compact 未完成；有效响应头仍保存为待确认，事件记录保留"))
 	}
-	r.state = &State{ID: newID(), Value: state, Node: n.Name, Created: stamp(), Status: "pending", Metrics: metrics, AuthHome: home, AccountHash: hash(a.Account), Model: model}
+	if r.state != nil {
+		r.state.ProbeCompleted = true
+		r.state.LastError = ""
+	}
 	return finish(nil)
 }
 func probeAll(ctx context.Context, s *Store, c *Config, emit Emit) ([]string, error) {
