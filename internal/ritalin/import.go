@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -118,18 +119,65 @@ func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, e
 		return e
 	}
 	defer run.Close()
+	return checkImportedNodes(ctx, s, c, nodes, func(ctx context.Context, n Node) (Node, error) {
+		reach, err := reachable(ctx, run.URLs[n.ID])
+		if err != nil {
+			return n, err
+		}
+		n.Checked = stamp()
+		n.Reach = reach
+		n.ExitIP = exitIP(ctx, run.URLs[n.ID])
+		return n, nil
+	}, emit)
+}
+
+// Workers only check nodes. Progress and config writes stay on the caller.
+func checkImportedNodes(ctx context.Context, s *Store, c *Config, nodes []Node, check func(context.Context, Node) (Node, error), emit Emit) error {
+	ctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	defer func() { cancel(); wg.Wait() }()
+	jobs := make(chan Node, len(nodes))
+	for _, n := range nodes {
+		jobs <- n
+	}
+	close(jobs)
+	type result struct {
+		node Node
+		err  error
+	}
+	results := make(chan result)
+	for range min(4, len(nodes)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for n := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				n, err := check(ctx, n)
+				select {
+				case results <- result{n, err}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() { wg.Wait(); close(results) }()
 	saved := map[string]bool{}
 	for _, n := range c.Nodes {
 		saved[n.ID] = true
 	}
-	passed := 0
-	for i, n := range nodes {
+	passed, completed := 0, 0
+	emit(fmt.Sprintf(uiText(c.Language, "检测 %d 个节点（最多 4 个并行）"), len(nodes)))
+	for r := range results {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		emit(fmt.Sprintf(uiText(c.Language, "[%d/%d] 检测 %s"), i+1, len(nodes), safeText(n.Name)))
-		reach, err := reachable(ctx, run.URLs[n.ID])
-		if err != nil {
+		n := r.node
+		completed++
+		emit(fmt.Sprintf(uiText(c.Language, "[%d/%d] 已检测 %s"), completed, len(nodes), safeText(n.Name)))
+		if r.err != nil {
 			emit(uiText(c.Language, "未保存：") + safeText(n.Name))
 			continue
 		}
@@ -137,17 +185,18 @@ func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, e
 		if saved[n.ID] {
 			continue
 		}
-		n.Checked = stamp()
-		n.Reach = reach
-		n.ExitIP = exitIP(ctx, run.URLs[n.ID])
 		if n.ExitIP != "" {
 			emit(uiText(c.Language, "出口 IP：") + n.ExitIP)
 		}
 		c.Nodes = append(c.Nodes, n)
-		saved[n.ID] = true
-		if e = s.Save(*c); e != nil {
+		if e := s.Save(*c); e != nil {
+			c.Nodes = c.Nodes[:len(c.Nodes)-1]
 			return e
 		}
+		saved[n.ID] = true
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 	emit(fmt.Sprintf(uiText(c.Language, "检测完成：%d/%d 可用"), passed, len(nodes)))
 	return nil
