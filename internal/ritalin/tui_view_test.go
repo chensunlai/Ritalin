@@ -210,6 +210,140 @@ func TestFormValidationKeepsInput(t *testing.T) {
 	}
 }
 
+func TestManualStateKeyboardSave(t *testing.T) {
+	for _, button := range []bool{false, true} {
+		t.Run(fmt.Sprint("button=", button), func(t *testing.T) {
+			m := dashboardFixture(t)
+			m.c.States = nil
+			m.tab = tabUse
+			m.notice = m.t("已保存")
+			m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			if m.form != "manual" || m.notice != "" {
+				t.Fatal("opening the form did not clear the previous save notice")
+			}
+			// A terminal paste, including a trailing newline, must not submit.
+			m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(syntheticState() + "\n"), Paste: true})
+			if m.form != "manual" || len(m.c.States) != 0 {
+				t.Fatal("paste submitted the form")
+			}
+			if button {
+				m.Update(tea.KeyMsg{Type: tea.KeyTab})
+				if m.formFocus != formSave || m.input.Focused() {
+					t.Fatal("Tab did not focus the Save button")
+				}
+			}
+			m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			c, err := m.store.Load()
+			if err != nil || len(c.States) != 1 || c.States[0].Status != "usable" || c.Active != "" || m.form != "" {
+				t.Fatal("Enter did not save a usable, unselected state", err)
+			}
+			if m.selectedEntry().id != c.States[0].ID {
+				t.Fatal("new state was not focused")
+			}
+			m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			c, err = m.store.Load()
+			if err != nil || c.Active != c.States[0].ID {
+				t.Fatal("Enter did not select the newly added state", err)
+			}
+		})
+	}
+}
+
+func TestFormCancelAndFocus(t *testing.T) {
+	for _, button := range []bool{false, true} {
+		m := dashboardFixture(t)
+		m.openForm("model", "探测模型", "unsaved-model")
+		m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		m.Update(tea.KeyMsg{Type: tea.KeyTab})
+		if m.formFocus != formInput || !m.input.Focused() {
+			t.Fatal("Tab did not cycle back to the input")
+		}
+		m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		if m.formFocus != formCancel || m.input.Focused() {
+			t.Fatal("Shift+Tab did not focus Cancel")
+		}
+		key := tea.KeyEsc
+		if button {
+			key = tea.KeyEnter
+		}
+		m.Update(tea.KeyMsg{Type: key})
+		if m.form != "" || m.c.Model != "" || m.notice != m.t("已取消") {
+			t.Fatal("cancelling a form saved changes or left a misleading notice")
+		}
+	}
+}
+
+func TestProxyFormNewlinesAndSaveButton(t *testing.T) {
+	m := dashboardFixture(t)
+	m.openForm("proxy", "粘贴代理列表（每行一个）或本地文件路径", "# first line")
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("# second line")})
+	if m.form != "proxy" || m.busy || m.input.Value() != "# first line\n# second line" {
+		t.Fatal("Enter did not insert a newline in the proxy list")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.busy || m.form != "" || cmd == nil {
+		t.Fatal("Save button did not start import")
+	}
+	t.Cleanup(m.cancel)
+	// Comments only: parsing fails locally, without making any network requests.
+	m.Update(cmd())
+	if m.busy {
+		t.Fatal("local import did not finish")
+	}
+}
+
+func TestFormValidationReturnsToInput(t *testing.T) {
+	m := dashboardFixture(t)
+	m.openForm("command", "启动命令", "not-json")
+	m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form != "command" || m.formFocus != formInput || !m.input.Focused() || m.input.Value() != "not-json" {
+		t.Fatal("invalid input was not retained and focused")
+	}
+	m.input.SetValue(`["codex"]`)
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form != "" {
+		t.Fatal("Enter did not save corrected input")
+	}
+}
+
+func TestManualStateSaveFailure(t *testing.T) {
+	m := dashboardFixture(t)
+	m.c.States = nil
+	blocked := filepath.Join(m.store.Root, "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m.store.Root = filepath.Join(blocked, "ritalin")
+	m.openForm("manual", "粘贴 x-codex-turn-state", syntheticState())
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.form != "manual" || m.input.Value() != syntheticState() || len(m.c.States) != 0 || !strings.HasPrefix(m.notice, m.t("保存失败：")) {
+		t.Fatal("save failure hid the error or retained an unsaved state")
+	}
+}
+
+func TestFormButtonsVisible(t *testing.T) {
+	for _, size := range [][2]int{{40, 18}, {80, 24}, {120, 32}} {
+		for _, lang := range []string{"zh", "en"} {
+			for _, form := range []string{"manual", "proxy", "command"} {
+				m := dashboardFixture(t)
+				m.width, m.height, m.c.Language = size[0], size[1], lang
+				m.openForm(form, "粘贴代理列表（每行一个）或本地文件路径", "")
+				for focus := formInput; focus <= formCancel; focus++ {
+					m.focusForm(focus)
+					view := ansi.Strip(m.View())
+					if !strings.Contains(view, "[ "+m.t("保存")+" ]") || !strings.Contains(view, "[ "+m.t("取消")+" ]") || strings.Contains(view, "Ctrl+S") {
+						t.Fatalf("form buttons hidden at %v/%s/%s/%d:\n%s", size, lang, form, focus, view)
+					}
+				}
+			}
+		}
+	}
+}
+
 func TestNodeSelectionIsNotDeletion(t *testing.T) {
 	m := dashboardFixture(t)
 	for i, e := range m.entries() {

@@ -68,7 +68,7 @@ Choose **中文** or **English** on entry; **L** switches languages. Follow **Pr
 | Use | Add a state or select one with **Enter**. Press **Enter** again to deselect, or **d** to delete. |
 | Settings | Set the launch command, reasoning effort, and language. Optional paths and network settings are under **Advanced**. |
 
-**Tab / 1–5** switches sections, **↑/↓** selects, **Enter** acts, **Ctrl+S** submits, and **Esc** cancels while keeping progress.
+**Tab / 1–5** switches sections, **↑/↓** selects, and **Enter** confirms or saves. For multi-line proxy lists, press **Tab** to select **Save**, then **Enter**. **Esc** cancels.
 
 For a custom launcher, set **Settings → Launch command** to a JSON array such as `["node", "/path/to/codex.js"]` or `["cmd.exe", "/c", "codex.cmd"]` on Windows.
 

@@ -26,6 +26,12 @@ const (
 
 var titles = []string{"代理", "探测", "测试", "使用", "设置"}
 
+const (
+	formInput = iota
+	formSave
+	formCancel
+)
+
 type tickMsg time.Time
 type logMsg string
 type jobDone struct {
@@ -47,6 +53,7 @@ type ui struct {
 	languageCursor                   int
 	advanced                         bool
 	form, formTitle, confirm         string
+	formFocus                        int
 	notice, log, modelOutput, review string
 	busy                             bool
 	cancel                           context.CancelFunc
@@ -99,22 +106,41 @@ func (m *ui) Init() tea.Cmd { return tick() }
 func tick() tea.Cmd {
 	return tea.Tick(250*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
-func (m *ui) save() {
+func (m *ui) save() bool {
 	if e := m.store.Save(m.c); e != nil {
 		m.notice = m.t("保存失败：") + e.Error()
-	} else {
-		m.notice = m.t("已保存")
+		return false
 	}
+	m.notice = m.t("已保存")
+	return true
 }
 func (m *ui) openForm(key, title, value string) tea.Cmd {
 	m.form = key
 	m.formTitle = m.t(title)
+	m.formFocus = formInput
+	m.notice = ""
 	m.input.SetValue(value)
 	m.bodyOffset = 0
 	cmd := m.input.Focus()
 	m.resize()
 	return cmd
 }
+func (m *ui) cancelForm() {
+	m.form = ""
+	m.formFocus = formInput
+	m.input.Blur()
+	m.notice = m.t("已取消")
+}
+
+func (m *ui) focusForm(focus int) tea.Cmd {
+	m.formFocus = (focus + 3) % 3
+	if m.formFocus == formInput {
+		return m.input.Focus()
+	}
+	m.input.Blur()
+	return nil
+}
+
 func (m *ui) ask(text string, fn func()) { m.confirm = m.t(text); m.confirmFn = fn }
 func (m *ui) entries() []entry {
 	out := []entry{}
@@ -226,7 +252,7 @@ func (m *ui) applyForm() tea.Cmd {
 	reject := func(message string) tea.Cmd {
 		m.notice = message
 		m.form = key
-		return m.input.Focus()
+		return m.focusForm(formInput)
 	}
 	switch key {
 	case "proxy", "clash":
@@ -278,7 +304,11 @@ func (m *ui) applyForm() tea.Cmd {
 			}
 		}
 		m.c.States = append(m.c.States, State{ID: newID(), Value: value, Node: m.t("手动添加"), Created: stamp(), Status: "usable", Metrics: metrics, AuthHome: probeHome(m.store, m.c)})
-		m.save()
+		if !m.save() {
+			m.c.States = m.c.States[:len(m.c.States)-1]
+			return reject(m.notice)
+		}
+		m.cursor = len(m.entries()) - 1
 		m.notice = m.t("已添加可用列表；选择该项并按 Enter 才会启用")
 		return nil
 	}
@@ -509,13 +539,27 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.form != "" {
-			if key == "esc" {
-				m.form = ""
-				m.input.Blur()
+			switch key {
+			case "esc":
+				m.cancelForm()
 				return m, nil
+			case "tab":
+				return m, m.focusForm(m.formFocus + 1)
+			case "shift+tab":
+				return m, m.focusForm(m.formFocus - 1)
+			case "enter":
+				if m.formFocus == formCancel {
+					m.cancelForm()
+					return m, nil
+				}
+				// Only the proxy list needs typed newlines. Bracketed paste
+				// remains intact in every field, including multi-line JSON.
+				if m.formFocus == formSave || m.form != "proxy" {
+					return m, m.applyForm()
+				}
 			}
-			if key == "ctrl+s" {
-				return m, m.applyForm()
+			if m.formFocus != formInput {
+				return m, nil
 			}
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)

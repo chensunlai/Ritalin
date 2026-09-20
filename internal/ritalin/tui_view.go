@@ -176,7 +176,17 @@ func (m *ui) workBody(l dashboardLayout) (string, string) {
 	width := l.work - 4
 	wrap := func(s string) string { return ansi.Wrap(s, max(1, width), "") }
 	if m.form != "" {
-		return m.t("编辑"), wrap(m.formTitle) + "\n\n" + m.input.View()
+		buttons := []string{}
+		for i, label := range []string{"保存", "取消"} {
+			button := "[ " + m.t(label) + " ]"
+			if m.formFocus == i+1 {
+				button = uiSelected.Render("› " + button)
+			} else {
+				button = "  " + uiMuted.Render(button)
+			}
+			buttons = append(buttons, button)
+		}
+		return m.t("编辑"), ansi.Truncate(m.formTitle, max(1, width), "…") + "\n\n" + m.input.View() + "\n" + strings.Join(buttons, "  ")
 	}
 	if m.confirm != "" {
 		title, body := m.t("确认"), m.confirm
@@ -406,7 +416,12 @@ func (m *ui) View() string {
 		help = m.t("Tab 切区 · Enter 操作 · L 语言")
 	}
 	if m.form != "" {
-		help = m.t("Ctrl+S 保存 · Esc 返回")
+		help = m.t("Enter 保存 · Tab 切换 · Esc 取消")
+		if m.formFocus != formInput {
+			help = m.t("Enter 确认 · Tab 切换 · Esc 取消")
+		} else if m.form == "proxy" {
+			help = m.t("Enter 换行 · Tab 选择保存 · Esc 取消")
+		}
 	}
 	if m.busy {
 		help = m.t("Esc 取消 · PgUp/PgDn 滚动 · End 跟随")
