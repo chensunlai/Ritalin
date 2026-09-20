@@ -32,6 +32,8 @@ wget -qO- https://raw.githubusercontent.com/chensunlai/Ritalin/main/install.sh |
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+To use `codex-ritalin` directly in new terminals, add the second line to `~/.bashrc` (or `~/.zshrc` for zsh).
+
 ### Windows PowerShell
 
 ```powershell
