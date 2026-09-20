@@ -253,7 +253,7 @@ func TestWorkflowAndSimpleSelection(t *testing.T) {
 	}
 	m.tab = tabUse
 	for _, e := range m.entries() {
-		if e.action != "manual" && e.action != "select" && e.action != "clear-states" {
+		if e.action != "manual" && e.action != "select" && e.action != "clear-states" && e.action != "import-states" && e.action != "export-states" {
 			t.Fatalf("redundant use action: %s", e.action)
 		}
 	}

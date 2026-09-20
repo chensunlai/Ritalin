@@ -272,6 +272,10 @@ func (m *ui) detailBody(width int) string {
 	}
 	text, value := "", ""
 	switch e.action {
+	case "import-states":
+		text = "从 JSON 文件导入到当前列表，自动跳过重复状态。"
+	case "export-states":
+		text = "将当前列表导出为 JSON；不包含凭证、HTML 或图片。"
 	case "import":
 		text = "导入 HTTP、HTTPS 或 SOCKS5 代理，自动检测并保存可用节点。"
 		if e.id == "clash" {

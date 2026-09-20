@@ -70,6 +70,8 @@ Choose **中文** or **English** on first launch; your choice is saved. **L** sw
 | Use | Add a state or select one with **Enter**. Press **Enter** again to deselect, or **d** to delete. |
 | Settings | Set the launch command, reasoning effort, and language. Optional paths and network settings are under **Advanced**. |
 
+**Test** and **Use** both have **Import / Export** for JSON files containing the full `x-codex-turn-state` values. Imports join the current list, skip duplicates, and never activate a state automatically. Exports default to `ritalin/exports/` and exclude credentials, HTML, and images.
+
 **Tab / 1–5** switches sections, **↑/↓** selects, and **Enter** confirms or saves. For multi-line proxy lists, press **Tab** to select **Save**, then **Enter**. **Esc** cancels.
 
 For a custom launcher, set **Settings → Launch command** to a JSON array such as `["node", "/path/to/codex.js"]` or `["cmd.exe", "/c", "codex.cmd"]` on Windows.

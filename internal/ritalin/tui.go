@@ -191,6 +191,7 @@ func (m *ui) entries() []entry {
 		if m.usableCount() > 0 {
 			out = append(out, entry{"下一步：使用 →", "next", "use"})
 		}
+		out = append(out, entry{"导入…", "import-states", "pending"}, entry{"导出…", "export-states", "pending"})
 		for _, s := range m.c.States {
 			if s.Status != "usable" {
 				out = append(out, entry{m.stateLabel(s) + "  · " + m.stateStatus(s.Status), "trial", s.ID})
@@ -200,7 +201,7 @@ func (m *ui) entries() []entry {
 			out = append(out, entry{"清空待确认状态…", "clear-states", "pending"})
 		}
 	case tabUse:
-		out = []entry{{"＋ 添加状态", "manual", ""}}
+		out = []entry{{"＋ 添加状态", "manual", ""}, {"导入…", "import-states", "usable"}, {"导出…", "export-states", "usable"}}
 		for _, s := range m.c.States {
 			if s.Status == "usable" {
 				mark := "  "
@@ -283,6 +284,20 @@ func (m *ui) applyForm() tea.Cmd {
 		return m.focusForm(formInput)
 	}
 	switch key {
+	case "import-pending", "import-usable":
+		added, skipped, err := importStates(m.store, &m.c, value, key == "import-usable")
+		if err != nil {
+			return reject(err.Error())
+		}
+		m.notice = fmt.Sprintf(m.t("已导入 %d 个状态，跳过 %d 个重复状态"), added, skipped)
+		return nil
+	case "export-pending", "export-usable":
+		count, err := exportStates(m.c, value, key == "export-usable")
+		if err != nil {
+			return reject(err.Error())
+		}
+		m.notice = fmt.Sprintf(m.t("已导出 %d 个状态：%s"), count, ExpandPath(value))
+		return nil
 	case "proxy", "clash":
 		return m.start("import", "", func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
 			return nil, importNodes(ctx, m.store, c, key, value, emit)
@@ -351,6 +366,11 @@ func (m *ui) applyForm() tea.Cmd {
 func (m *ui) activate(e entry) tea.Cmd {
 	m.bodyOffset = 0
 	switch e.action {
+	case "import-states":
+		return m.openForm("import-"+e.id, "导入状态 JSON 文件路径", "")
+	case "export-states":
+		path := filepath.Join(m.store.Root, "exports", e.id+"-"+time.Now().Format("20060102-150405")+"-"+newID()[:6]+".json")
+		return m.openForm("export-"+e.id, "导出路径（文件包含完整状态）", path)
 	case "next":
 		m.tab = map[string]int{"proxies": tabProxies, "probe": tabProbe, "test": tabTest, "use": tabUse}[e.id]
 		m.cursor = 0
