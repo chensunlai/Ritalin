@@ -67,7 +67,7 @@ func ensureMihomo(ctx context.Context, s *Store, c Config, emit func(string)) (s
 		if resp.StatusCode != 200 {
 			return nil, fmt.Errorf("下载 HTTP %d", resp.StatusCode)
 		}
-		return readLimit(resp.Body, limit)
+		return downloadProgress(resp.Body, resp.ContentLength, limit, emit)
 	}
 	b, e := get("https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/"+mihomoVersion, 4<<20)
 	if e != nil {
