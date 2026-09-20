@@ -157,6 +157,7 @@ func (m *ui) entries() []entry {
 		out = []entry{{"＋ HTTP / SOCKS", "import", "proxy"}, {"＋ Clash", "import", "clash"}}
 		if len(m.c.Nodes) > 0 {
 			out = append(out, entry{"下一步：探测 →", "next", "probe"})
+			out = append(out, entry{"清空全部节点…", "clear", "all"})
 		}
 		for _, n := range m.c.Nodes {
 			out = append(out, entry{safeText(n.Name), "node", n.ID})
@@ -195,6 +196,9 @@ func (m *ui) entries() []entry {
 				out = append(out, entry{m.stateLabel(s) + "  · " + m.stateStatus(s.Status), "trial", s.ID})
 			}
 		}
+		if m.pendingCount() > 0 {
+			out = append(out, entry{"清空待确认状态…", "clear-states", "pending"})
+		}
 	case tabUse:
 		out = []entry{{"＋ 添加状态", "manual", ""}}
 		for _, s := range m.c.States {
@@ -205,6 +209,9 @@ func (m *ui) entries() []entry {
 				}
 				out = append(out, entry{mark + m.stateLabel(s), "select", s.ID})
 			}
+		}
+		if m.usableCount() > 0 {
+			out = append(out, entry{"清空可用状态…", "clear-states", "usable"})
 		}
 	case tabSettings:
 		out = []entry{{"启动命令", "command", ""}, {"推理强度", "effort", ""}, {"界面语言", "language", ""}, {"高级设置 →", "advanced", ""}}
@@ -329,7 +336,12 @@ func (m *ui) applyForm() tea.Cmd {
 			m.c.States = m.c.States[:len(m.c.States)-1]
 			return reject(m.notice)
 		}
-		m.cursor = len(m.entries()) - 1
+		for i, item := range m.entries() {
+			if item.action == "select" && item.id == m.c.States[len(m.c.States)-1].ID {
+				m.cursor = i
+				break
+			}
+		}
 		m.notice = m.t("已添加可用列表；选择该项并按 Enter 才会启用")
 		return nil
 	}
@@ -366,11 +378,26 @@ func (m *ui) activate(e entry) tea.Cmd {
 		m.ask("确认清空此类节点？已采集状态和实验文件保留。", func() {
 			out := []Node{}
 			for _, n := range m.c.Nodes {
-				if n.Kind != kind {
+				if kind != "all" && n.Kind != kind {
 					out = append(out, n)
 				}
 			}
 			m.c.Nodes = out
+			m.cursor = 0
+			m.save()
+		})
+	case "clear-states":
+		usable := e.id == "usable"
+		m.ask("确认清空此列表？HTML、图片和实验记录保留。", func() {
+			var ids []string
+			for _, s := range m.c.States {
+				if (s.Status == "usable") == usable {
+					ids = append(ids, s.ID)
+				}
+			}
+			for _, id := range ids {
+				removeState(&m.c, id)
+			}
 			m.cursor = 0
 			m.save()
 		})

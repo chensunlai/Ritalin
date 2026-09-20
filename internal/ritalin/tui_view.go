@@ -279,6 +279,11 @@ func (m *ui) detailBody(width int) string {
 		}
 	case "clear":
 		text = "删除此分类下的所有节点。"
+		if e.id == "all" {
+			text = "清空全部节点…"
+		}
+	case "clear-states":
+		text = "清空当前列表，保留 HTML、图片和实验记录。"
 	case "probe":
 		text = "探测已保存节点，收集候选状态。"
 		value = fmt.Sprintf("%d %s", len(m.c.Nodes), m.t("节点"))
