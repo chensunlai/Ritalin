@@ -60,8 +60,6 @@ codex-ritalin --yolo
 codex-ritalin exec "Explain this project"
 ```
 
-Arguments, input, output, and the working directory are passed through to Codex.
-
 ## Configure with dosing
 
 ```bash
@@ -72,18 +70,12 @@ Use **Tab** or **1–6** to switch sections, **↑/↓** to select, and **Enter*
 
 | Section | What to do |
 | --- | --- |
-| HTTP / SOCKS | Paste proxy URLs, one per line, or enter a file path. Ritalin tests the models endpoints and saves reachable proxies. Delete individual entries or clear the list. |
-| Clash | Enter a subscription URL or YAML file path. Ritalin downloads Mihomo if needed, extracts the nodes, tests them, and saves reachable ones. |
-| Compact | Choose the Codex home and model, then probe all saved nodes with up to two concurrent requests. Inspect state lengths and optionally filter the new candidates. |
-| Pelican | Test candidates one at a time with live output. Open the generated HTML and PNG, press **g** to keep, **b** to reject, or **s** to review later. Resume whenever you want. |
-| Usable states | Paste an existing state directly, select a tested state with **Enter**, or delete one with **d**. Toggle replacement for comparison runs. |
+| HTTP / SOCKS | Paste proxy URLs, one per line, or enter a file path to test and save working proxies. Delete entries or clear the list. |
+| Clash | Import a subscription URL or YAML file to test and save working nodes. Mihomo is downloaded automatically if needed. |
+| Compact | Choose the Codex home and model, then probe saved nodes to collect turn-state candidates. |
+| Pelican | Test candidates with live output and review the generated HTML and PNG. Press **g** to keep, **b** to reject, or **s** to review later. |
+| Usable states | Paste a state directly, select one with **Enter**, or delete one with **d**. |
 | Settings | Change the Codex launch command, model, reasoning effort, proxy, and optional executable paths. |
-
-Proxy checks and compact probes use each chosen node directly. Downloads and pelican tests connect directly unless a system proxy is configured. Mihomo starts and stops automatically around node tests.
-
-Pelican tests default to `low`. The optional first-sentence filter skips responses containing `内联` or `内嵌`. Each completed test produces an HTML file and an automatically rendered image.
-
-The optional length filter keeps **292 characters / 10 blocks** for personal accounts, or **332 characters / 12 blocks** for Team/Business accounts. Candidates still need your review.
 
 If `codex` is not directly executable on your machine, set a launch command as a JSON array:
 
