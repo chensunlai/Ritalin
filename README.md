@@ -1,12 +1,10 @@
 # Ritalin
 
-A lightweight Codex wrapper for testing proxies, comparing turn states, and choosing the state used by your next session.
+A lightweight middleware for Codex, with a TUI for collecting, testing, and selecting turn states.
 
 ## How it works
 
-`codex-ritalin` forwards your commands to Codex. Run `codex-ritalin dosing` to manage proxies, collect `x-codex-turn-state` values, and compare them with an animated pelican-on-a-bicycle test.
-
-When a state is selected, a local wrapper replaces that header in both directions:
+When a state is selected, Ritalin replaces the existing `x-codex-turn-state` header in Codex's requests before forwarding them to OpenAI. It applies the same replacement to responses before returning them to Codex.
 
 ```text
 Codex → Ritalin → OpenAI
