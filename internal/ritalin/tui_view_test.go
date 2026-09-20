@@ -105,6 +105,68 @@ func TestLanguageSelectionAndInterface(t *testing.T) {
 	}
 }
 
+func TestLanguageChoicePersistsAcrossLaunches(t *testing.T) {
+	for _, lang := range []string{"zh", "en"} {
+		t.Run(lang, func(t *testing.T) {
+			s := &Store{Root: t.TempDir()}
+			c, err := s.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := newUI(s, c)
+			if !m.languagePick {
+				t.Fatal("first launch did not ask for a language")
+			}
+			key := "1"
+			if lang == "en" {
+				key = "2"
+			}
+			m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+			stored, err := s.Load()
+			if err != nil || stored.Language != lang {
+				t.Fatal("language was not saved", err)
+			}
+			next := newUI(s, stored)
+			if next.languagePick || next.c.Language != lang {
+				t.Fatal("relaunch ignored the saved language")
+			}
+			// Language remains editable through Settings after startup.
+			next.activate(entry{action: "language"})
+			if !next.languagePick || next.languageCursor != m.languageCursor {
+				t.Fatal("settings did not open the current language")
+			}
+			next.Update(tea.KeyMsg{Type: tea.KeyDown})
+			next.Update(tea.KeyMsg{Type: tea.KeyEnter})
+			changed, err := s.Load()
+			if err != nil || changed.Language == lang || newUI(s, changed).languagePick {
+				t.Fatal("updated language did not persist", err)
+			}
+		})
+	}
+}
+
+func TestLanguageStartupWithExistingConfig(t *testing.T) {
+	for _, lang := range []string{"", "zh", "en", "unknown"} {
+		t.Run(lang, func(t *testing.T) {
+			s := &Store{Root: t.TempDir()}
+			c := Defaults()
+			c.Language = lang
+			if err := s.Save(c); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := s.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := newUI(s, loaded)
+			wantPick := lang != "zh" && lang != "en"
+			if m.languagePick != wantPick {
+				t.Fatalf("language %q: picker = %v, want %v", lang, m.languagePick, wantPick)
+			}
+		})
+	}
+}
+
 func TestDashboardANSIAlignment(t *testing.T) {
 	profile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.TrueColor)

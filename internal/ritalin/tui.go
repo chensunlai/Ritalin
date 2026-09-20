@@ -80,11 +80,20 @@ func runTUI(s *Store, c Config) error {
 		return errors.New("另一个 dosing 界面正在使用此配置")
 	}
 	defer lock.Unlock()
+	m := newUI(s, c)
+	_, e = tea.NewProgram(m, tea.WithAltScreen()).Run()
+	if m.cancel != nil {
+		m.cancel()
+	}
+	return e
+}
+
+func newUI(s *Store, c Config) *ui {
 	input := textarea.New()
 	input.SetHeight(5)
 	input.CharLimit = 1024 * 1024
 	input.ShowLineNumbers = false
-	m := &ui{store: s, c: c, width: 100, height: 32, input: input, viewport: viewport.New(60, 6), logViewport: viewport.New(32, 6), languagePick: true}
+	m := &ui{store: s, c: c, width: 100, height: 32, input: input, viewport: viewport.New(60, 6), logViewport: viewport.New(32, 6), languagePick: c.Language != "zh" && c.Language != "en"}
 	if m.usableCount() > 0 {
 		m.tab = tabUse
 	} else if m.pendingCount() > 0 {
@@ -96,11 +105,7 @@ func runTUI(s *Store, c Config) error {
 		m.languageCursor = 1
 	}
 	m.resize()
-	_, e = tea.NewProgram(m, tea.WithAltScreen()).Run()
-	if m.cancel != nil {
-		m.cancel()
-	}
-	return e
+	return m
 }
 func (m *ui) Init() tea.Cmd { return tick() }
 func tick() tea.Cmd {

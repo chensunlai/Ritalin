@@ -58,7 +58,7 @@ Configure Ritalin:
 codex-ritalin dosing
 ```
 
-Choose **中文** or **English** on entry; **L** switches languages. Follow **Proxies → Probe → Test → Use**, or add an existing state directly in **Use**.
+Choose **中文** or **English** on first launch; your choice is saved. **L** switches languages. Follow **Proxies → Probe → Test → Use**, or add an existing state directly in **Use**.
 
 | Section | What to do |
 | --- | --- |

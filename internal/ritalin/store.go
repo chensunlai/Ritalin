@@ -88,7 +88,7 @@ func DefaultHome() string {
 }
 func OpenStore() *Store { h := DefaultHome(); return &Store{h, filepath.Join(h, "ritalin")} }
 func Defaults() Config {
-	return Config{Version: 1, Language: "zh", Command: []string{"codex"}, Effort: "low", Replace: true, Nodes: []Node{}, States: []State{}}
+	return Config{Version: 1, Command: []string{"codex"}, Effort: "low", Replace: true, Nodes: []Node{}, States: []State{}}
 }
 func (s *Store) Load() (Config, error) {
 	c := Defaults()
