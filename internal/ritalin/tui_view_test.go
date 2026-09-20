@@ -305,7 +305,7 @@ func TestDashboardOutputAndScroll(t *testing.T) {
 }
 
 func TestProbeAndTrialDeselectBeforeStarting(t *testing.T) {
-	for _, kind := range []string{"compact", "pelican"} {
+	for _, kind := range []string{"probe", "pelican"} {
 		for _, failure := range []error{nil, context.Canceled, errors.New("test failure")} {
 			t.Run(fmt.Sprintf("%s/%v", kind, failure), func(t *testing.T) {
 				m := dashboardFixture(t)
@@ -346,7 +346,7 @@ func TestJobDoesNotStartIfDeselectCannotBeSaved(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.store.Root = filepath.Join(blocked, "ritalin")
-	cmd := m.start("compact", "", func(context.Context, *Config, Emit) ([]string, error) {
+	cmd := m.start("probe", "", func(context.Context, *Config, Emit) ([]string, error) {
 		t.Error("job started despite failing to deselect the active state")
 		return nil, nil
 	})

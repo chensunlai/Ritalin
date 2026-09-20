@@ -63,7 +63,7 @@ func readAuth(home string) (auth, error) {
 		} `json:"tokens"`
 	}
 	if json.Unmarshal(b, &a) != nil || a.Tokens.Access == "" {
-		return auth{}, errors.New("compact 实验需要 ChatGPT 登录凭证，不支持 API Key / keyring-only")
+		return auth{}, errors.New("探测需要 ChatGPT 登录凭证，不支持 API Key / keyring-only")
 	}
 	return auth{a.Tokens.Access, a.Tokens.Account}, nil
 }
@@ -108,7 +108,15 @@ type probeResult struct {
 	err      error
 }
 
-func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) probeResult {
+func probeState(ctx context.Context, n Node, proxyURL, home, model string, a auth) probeResult {
+	tr, err := transport(proxyURL)
+	if err != nil {
+		return probeResult{nodeName: n.Name, attempt: Attempt{Node: n.ID, Started: stamp(), Error: err.Error()}, err: err}
+	}
+	return probeStateWithTransport(ctx, n, home, model, a, tr)
+}
+
+func probeStateWithTransport(ctx context.Context, n Node, home, model string, a auth, tr http.RoundTripper) probeResult {
 	start := time.Now()
 	r := probeResult{nodeName: n.Name, attempt: Attempt{Node: n.ID, Started: stamp(), Events: []Event{}}}
 	finish := func(err error) probeResult {
@@ -119,11 +127,11 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 		r.attempt.Seconds = time.Since(start).Seconds()
 		return r
 	}
-	payload := map[string]any{"model": model, "instructions": "Preserve the task state in this synthetic test conversation.", "input": []any{
-		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "Remember the test marker blue-square."}}},
-		map[string]any{"type": "message", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "The marker is blue-square."}}},
-		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "Keep the marker for the next turn."}}}, map[string]any{"type": "compaction_trigger"}},
-		"tools": []any{}, "tool_choice": "auto", "parallel_tool_calls": true, "store": false, "stream": true, "include": []string{"reasoning.encrypted_content"}, "reasoning": map[string]string{"effort": "medium"}}
+	// A short Responses probe, following csss's probeBody; no compaction or
+	// reasoning-effort override is needed to collect the response header.
+	payload := map[string]any{"model": model, "instructions": "Reply with OK.", "input": []any{
+		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "Reply with OK."}}}},
+		"parallel_tool_calls": true, "store": false, "stream": true, "include": []string{"reasoning.encrypted_content"}}
 	b, _ := json.Marshal(payload)
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -135,10 +143,6 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 	req.Header.Set("originator", "codex_cli_rs")
 	req.Header.Set("User-Agent", "codex_cli_rs/0.155.1")
 	req.Header.Set("session_id", newID())
-	tr, e := transport(proxyURL)
-	if e != nil {
-		return finish(e)
-	}
 	client := &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	resp, e := client.Do(req)
@@ -155,10 +159,10 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 	if state != "" && resp.StatusCode == 200 {
 		if m, err := parseState(state); err == nil {
 			r.attempt.Metrics = &m
-			r.state = &State{ID: newID(), Value: state, Node: n.Name, Created: stamp(), Status: "pending", Metrics: m, AuthHome: home, AccountHash: hash(a.Account), Model: model, LastError: "compact 尚未确认完成"}
+			r.state = &State{ID: newID(), Value: state, Node: n.Name, Created: stamp(), Status: "pending", Metrics: m, AuthHome: home, AccountHash: hash(a.Account), Model: model, LastError: "探测尚未确认完成"}
 		}
 	}
-	compacted, completed := false, false
+	completed, failed := false, false
 	sc := bufio.NewScanner(io.LimitReader(resp.Body, 8<<20))
 	sc.Buffer(make([]byte, 4096), 2<<20)
 	for sc.Scan() {
@@ -167,37 +171,39 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 			continue
 		}
 		var ev struct {
-			Type string `json:"type"`
-			Code string `json:"code"`
-			Item struct {
-				Type string `json:"type"`
-			} `json:"item"`
+			Type  string `json:"type"`
+			Code  string `json:"code"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
 			Response struct {
-				Output []struct {
-					Type string `json:"type"`
-				} `json:"output"`
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
 			} `json:"response"`
 		}
 		if json.Unmarshal([]byte(strings.TrimSpace(line[5:])), &ev) != nil {
 			continue
 		}
-		r.attempt.Events = append(r.attempt.Events, Event{At: stamp(), Type: ev.Type, Code: safeText(ev.Code)})
+		code := ev.Code
+		if code == "" {
+			code = ev.Error.Code
+		}
+		if code == "" {
+			code = ev.Response.Error.Code
+		}
+		r.attempt.Events = append(r.attempt.Events, Event{At: stamp(), Type: ev.Type, Code: safeText(code)})
 		if ev.Type == "response.completed" {
 			completed = true
 		}
-		if ev.Type == "response.compaction.compacting" || ev.Item.Type == "compaction" || ev.Item.Type == "context_compaction" {
-			compacted = true
-		}
-		for _, o := range ev.Response.Output {
-			if o.Type == "compaction" || o.Type == "context_compaction" {
-				compacted = true
-			}
+		if ev.Type == "response.failed" || ev.Type == "response.incomplete" || ev.Type == "error" {
+			failed = true
 		}
 	}
 	if e = sc.Err(); e != nil {
 		return finish(errors.New("响应中断或超过大小限制"))
 	}
-	r.attempt.Completed = resp.StatusCode == 200 && completed && compacted
+	r.attempt.Completed = resp.StatusCode == 200 && completed && !failed
 	if state == "" {
 		return finish(fmt.Errorf("HTTP %d，未返回 turn-state", resp.StatusCode))
 	}
@@ -207,7 +213,7 @@ func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) 
 	}
 	r.attempt.Metrics = &metrics
 	if !r.attempt.Completed {
-		return finish(errors.New("compact 未完成；有效响应头仍保存为待确认，事件记录保留"))
+		return finish(errors.New("探测未完成；有效响应头仍保存为待确认，事件记录保留"))
 	}
 	if r.state != nil {
 		r.state.ProbeCompleted = true
@@ -249,7 +255,7 @@ func probeAll(ctx context.Context, s *Store, c *Config, emit Emit) ([]string, er
 				if ctx.Err() != nil {
 					return
 				}
-				results <- compact(ctx, n, run.URLs[n.ID], home, model, a)
+				results <- probeState(ctx, n, run.URLs[n.ID], home, model, a)
 			}
 		}()
 	}
@@ -302,5 +308,5 @@ func (r probeResult) progress(done, total int, language string) string {
 	if r.err != nil {
 		status = r.err.Error()
 	}
-	return fmt.Sprintf("compact %d/%d · %s · %s", done, total, safeText(r.nodeName), status)
+	return fmt.Sprintf("%s %d/%d · %s · %s", uiText(language, "探测"), done, total, safeText(r.nodeName), status)
 }

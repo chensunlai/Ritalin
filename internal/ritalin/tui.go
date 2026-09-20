@@ -224,7 +224,7 @@ func (m *ui) entries() []entry {
 }
 func (m *ui) wait() tea.Cmd { ch := m.events; return func() tea.Msg { return <-ch } }
 func (m *ui) start(kind, id string, fn func(context.Context, *Config, Emit) ([]string, error)) tea.Cmd {
-	if (kind == "compact" || kind == "pelican") && m.c.Active != "" {
+	if (kind == "probe" || kind == "pelican") && m.c.Active != "" {
 		active := m.c.Active
 		m.c.Active = ""
 		if !m.save() {
@@ -439,7 +439,7 @@ func (m *ui) activate(e entry) tea.Cmd {
 			m.notice = m.t("导入节点后即可开始探测")
 			return nil
 		}
-		return m.start("compact", "", func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
+		return m.start("probe", "", func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
 			return probeAll(ctx, m.store, c, emit)
 		})
 	case "home":
@@ -548,7 +548,7 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quitAfter {
 			return m, tea.Quit
 		}
-		if v.kind == "compact" && len(v.ids) > 0 {
+		if v.kind == "probe" && len(v.ids) > 0 {
 			m.probeIDs = v.ids
 			m.confirm = "length-filter"
 		}
