@@ -9,7 +9,7 @@ A lightweight Codex wrapper for testing proxies, comparing turn states, and choo
 When a state is selected, a local wrapper replaces that header in both directions:
 
 ```text
-Codex → Ritalin → your proxy → OpenAI
+Codex → Ritalin → OpenAI
 ```
 
 Turn replacement off to run a comparison through the same connection.
@@ -81,7 +81,7 @@ Use **Tab** or **1–6** to switch sections, **↑/↓** to select, and **Enter*
 | Usable states | Paste an existing state directly, select a tested state with **Enter**, or delete one with **d**. Toggle replacement for comparison runs. |
 | Settings | Change the Codex launch command, model, reasoning effort, proxy, and optional executable paths. |
 
-Proxy checks and compact probes use each chosen node directly. Downloads and pelican tests use your system proxy. Mihomo starts and stops automatically around node tests.
+Proxy checks and compact probes use each chosen node directly. Downloads and pelican tests connect directly unless a system proxy is configured. Mihomo starts and stops automatically around node tests.
 
 Pelican tests default to `low`. The optional first-sentence filter skips responses containing `内联` or `内嵌`. Each completed test produces an HTML file and an automatically rendered image.
 
