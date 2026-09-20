@@ -36,7 +36,7 @@ func TestAppServerStreamsBeforeCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if firstDelta.IsZero() || completed.Sub(firstDelta) < 150*time.Millisecond || !strings.HasPrefix(output.String(), "<!doctype html>") {
+	if firstDelta.IsZero() || completed.Sub(firstDelta) < 150*time.Millisecond || output.String() != "已创建鹈鹕动画。" {
 		t.Fatal("output was not streamed before completion")
 	}
 	if cmd.ProcessState == nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -15,14 +16,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 )
 
-const pelicanPrompt = `创建一个完整、可直接用浏览器打开的独立 HTML 文件，内容是用 SVG 绘制的“鹈鹕骑自行车”2D 循环动画。
-鹈鹕应有长嘴、喉囊、身体、翅膀和腿，自行车结构完整，车轮、脚踏和腿运动协调；构图美观，自动循环，适应屏幕。
-仅使用文件内部的 SVG 与 CSS，不使用 JavaScript、外部资源、字体、图片或第三方库。仅输出完整 HTML 源码，不要解释、Markdown 代码围栏或执行工具。文件由测试程序保存。`
+const pelicanPrompt = `创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。`
+
+// Only collect files produced in this attempt, never HTML quoted in a reply or
+// another trial's output. WalkDir does not follow symlinks.
+func generatedHTML(dir string) (string, error) {
+	var result string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".html" && ext != ".htm" {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Size() > 0 && result == "" {
+			result = path
+		}
+		return nil
+	})
+	return result, err
+}
 
 func firstSentence(s string) string {
 	if i := strings.IndexAny(s, "。！？!?\n"); i >= 0 {
@@ -166,11 +193,14 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return e
 	}
 	defer w.Close()
-	cmd, e := codexCommand(*c, []string{"app-server", "--listen", "stdio://", "-c", `cli_auth_credentials_store="file"`})
+	cmd, e := codexCommand(*c, []string{"app-server", "--listen", "stdio://", "-c", `cli_auth_credentials_store="file"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `approval_policy="never"`})
 	if e != nil {
 		return e
 	}
-	cmd.Dir = filepath.Join(s.Root, "pelican")
+	cmd.Dir = filepath.Join(dir, "workspace")
+	if e = os.MkdirAll(cmd.Dir, 0700); e != nil {
+		return e
+	}
 	cmd.Env = setEnv(w.Env(os.Environ()), "CODEX_HOME", home)
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
 		var env []string
@@ -196,7 +226,12 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		}
 		return v
 	}
+	outputBytes := 0
 	display := func(v string) error {
+		outputBytes += len(v)
+		if outputBytes > 32<<20 {
+			return errors.New("app-server output exceeds 32 MiB")
+		}
 		v = redact(v)
 		if _, err := io.WriteString(output, v); err != nil {
 			return err
@@ -205,10 +240,9 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return nil
 	}
 	texts := map[string]string{}
-	var order []string
+	toolOutput := map[string]string{}
 	var firstID string
 	filtered := false
-	outputBytes := 0
 	filterErr := errors.New("keyword filter")
 	// All callbacks run on the app-server reader loop, in notification order.
 	notify := func(method string, p appParams) error {
@@ -221,11 +255,14 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			message = p.Turn.Error.Message
 			info = string(p.Turn.Error.Info)
 		}
+		message = ansi.Strip(message)
+		toolJSON, _ := json.Marshal(p.Item)
 		if err := enc.Encode(map[string]any{
 			"at": stamp(), "elapsed_seconds": time.Since(started).Seconds(), "type": method,
 			"thread_id": p.ThreadID, "turn_id": p.TurnID, "item_type": p.Item.Type,
 			"message": redact(message), "error_info": redact(info), "will_retry": p.WillRetry,
 			"turn_status": p.Turn.Status,
+			"item_id":     p.ItemID, "item": json.RawMessage(redact(string(toolJSON))),
 		}); err != nil {
 			return err
 		}
@@ -239,11 +276,13 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			emit(uiText(c.Language, "会话已创建"))
 		case "turn/started":
 			emit(uiText(c.Language, "正在生成…"))
+		case "item/started":
+			return displayTool(p.Item, false, toolOutput, display)
 		case "item/agentMessage/delta", "item/completed":
 			id := p.ItemID
 			if method == "item/completed" {
 				if p.Item.Type != "agentMessage" {
-					return nil
+					return displayTool(p.Item, true, toolOutput, display)
 				}
 				id = p.Item.ID
 			}
@@ -252,7 +291,11 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			}
 			previous, exists := texts[id]
 			if !exists {
-				order = append(order, id)
+				if firstID != "" {
+					if err := display("\n\n"); err != nil {
+						return err
+					}
+				}
 				if firstID == "" {
 					firstID = id
 				}
@@ -268,8 +311,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			} else {
 				texts[id] = previous + chunk
 			}
-			outputBytes += len(chunk)
-			if outputBytes > 32<<20 || len(texts[id]) > 32<<20 {
+			if len(texts[id]) > 32<<20 {
 				return errors.New("app-server output exceeds 32 MiB")
 			}
 			if chunk != "" {
@@ -281,7 +323,10 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 				filtered = true
 				return filterErr
 			}
-		case "item/reasoning/summaryTextDelta", "item/plan/delta", "item/commandExecution/outputDelta":
+		case "item/commandExecution/outputDelta":
+			toolOutput[p.ItemID] += p.Delta
+			return display(p.Delta)
+		case "item/reasoning/summaryTextDelta", "item/plan/delta", "item/fileChange/outputDelta":
 			return display(p.Delta)
 		}
 		return nil
@@ -295,6 +340,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		}
 	}
 	meta := map[string]any{"state_id": id, "model": model, "effort": c.Effort, "transport": "app-server/stdio",
+		"prompt": pelicanPrompt, "cwd": cmd.Dir, "sandbox": "danger-full-access", "approval_policy": "never",
 		"started": started.UTC().Format(time.RFC3339), "seconds": time.Since(started).Seconds(),
 		"keyword_rejected": filtered, "cancelled": ctx.Err() != nil, "completed": runErr == nil,
 		"automatic_retries": "Codex controlled; emitted error/retry events recorded"}
@@ -317,22 +363,16 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		_ = s.Save(*c)
 		return errors.New(state.LastError)
 	}
-	var complete strings.Builder
-	for _, id := range order {
-		complete.WriteString(texts[id])
-		complete.WriteByte('\n')
+	html, e := generatedHTML(cmd.Dir)
+	if e != nil {
+		return e
 	}
-	text := complete.String()
-	html := extractHTML(text)
 	if html == "" {
 		removeState(c, id)
 		emit(uiText(c.Language, "模型完成但无完整 HTML，已移除候选"))
 		return s.Save(*c)
 	}
-	state.HTML = filepath.Join(dir, "pelican.html")
-	if e = atomicWrite(state.HTML, []byte(html), 0600); e != nil {
-		return e
-	}
+	state.HTML = html
 	state.PNG = ""
 	state.Status = "review"
 	state.LastError = ""

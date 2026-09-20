@@ -24,6 +24,14 @@ func (e *appError) UnmarshalJSON(b []byte) error {
 	return json.Unmarshal(b, (*plain)(e))
 }
 
+type appItem struct {
+	ID, Type, Text, Status         string
+	Command, Cwd, AggregatedOutput string
+	ExitCode                       *int
+	Server, Tool, Query, Path      string
+	Changes                        []struct{ Path string } `json:"changes"`
+}
+
 type appParams struct {
 	ThreadID  string    `json:"threadId"`
 	TurnID    string    `json:"turnId"`
@@ -32,10 +40,8 @@ type appParams struct {
 	Message   string    `json:"message"`
 	WillRetry bool      `json:"willRetry"`
 	Error     *appError `json:"error"`
-	Item      struct {
-		ID, Type, Text string
-	} `json:"item"`
-	Turn struct {
+	Item      appItem   `json:"item"`
+	Turn      struct {
 		ID, Status string
 		Error      *appError `json:"error"`
 	} `json:"turn"`
@@ -169,7 +175,7 @@ func appServerTurn(ctx context.Context, cmd *exec.Cmd, model, effort, prompt str
 						return err
 					}
 					err = send(1, "thread/start", map[string]any{
-						"model": model, "cwd": cmd.Dir, "sandbox": "read-only",
+						"model": model, "cwd": cmd.Dir, "sandbox": "danger-full-access",
 						"approvalPolicy": "never", "ephemeral": true,
 					})
 				case "1":
@@ -208,8 +214,8 @@ func appServerTurn(ctx context.Context, cmd *exec.Cmd, model, effort, prompt str
 			var p appParams
 			switch msg.Method {
 			case "thread/started", "turn/started", "turn/completed", "error", "configWarning",
-				"item/agentMessage/delta", "item/completed", "item/reasoning/summaryTextDelta",
-				"item/plan/delta", "item/commandExecution/outputDelta":
+				"item/agentMessage/delta", "item/started", "item/completed", "item/reasoning/summaryTextDelta",
+				"item/plan/delta", "item/commandExecution/outputDelta", "item/fileChange/outputDelta":
 				if err = json.Unmarshal(msg.Params, &p); err != nil {
 					return fmt.Errorf("app-server %s: %w", msg.Method, err)
 				}

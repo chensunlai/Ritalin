@@ -45,7 +45,7 @@ func TestPelicanHelper(t *testing.T) {
 	notify("unknown/futureNotification", map[string]any{"message": map[string]string{"unexpected": "shape"}})
 	read("initialized")
 	p := read("thread/start")
-	if p["model"] != "synthetic-model" || p["sandbox"] != "read-only" || p["approvalPolicy"] != "never" || p["ephemeral"] != true {
+	if p["model"] != "synthetic-model" || p["sandbox"] != "danger-full-access" || p["approvalPolicy"] != "never" || p["ephemeral"] != true {
 		os.Exit(12)
 	}
 	reply(1, map[string]any{"thread": map[string]string{"id": "thread-test"}})
@@ -53,6 +53,12 @@ func TestPelicanHelper(t *testing.T) {
 	p = read("turn/start")
 	if p["threadId"] != "thread-test" || p["model"] != "synthetic-model" || p["effort"] != "low" {
 		os.Exit(13)
+	}
+	if mode != "stream" {
+		input := p["input"].([]any)[0].(map[string]any)
+		if input["text"] != "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画。" {
+			os.Exit(15)
+		}
 	}
 	reply(2, map[string]any{"turn": map[string]string{"id": "turn-test"}})
 	notify("turn/started", map[string]any{"threadId": "thread-test", "turn": map[string]string{"id": "turn-test"}})
@@ -67,7 +73,7 @@ func TestPelicanHelper(t *testing.T) {
 	}
 	if mode == "retry" {
 		notify("error", map[string]any{"threadId": "thread-test", "turnId": "turn-test", "willRetry": true, "error": map[string]string{"message": "capacity retry", "codexErrorInfo": "serverOverloaded"}})
-		fmt.Fprintln(os.Stderr, "diagnostic synthetic-token test-account")
+		fmt.Fprintln(os.Stderr, "\x1b[31mdiagnostic synthetic-token test-account\x1b[0m")
 		time.Sleep(50 * time.Millisecond)
 	}
 	text := "nothing generated"
@@ -75,6 +81,21 @@ func TestPelicanHelper(t *testing.T) {
 		text = "使用内嵌 SVG 来画鹈鹕。"
 	}
 	if mode == "html" || mode == "retry" || mode == "stream" || mode == "failed" {
+		text = "已创建鹈鹕动画。"
+		item := map[string]any{"id": "cmd", "type": "commandExecution", "command": "check pelican.html", "status": "inProgress"}
+		notify("item/started", map[string]any{"item": item})
+		notify("item/commandExecution/outputDelta", map[string]string{"itemId": "cmd", "delta": "tool output\n"})
+		item["status"], item["exitCode"], item["aggregatedOutput"] = "completed", 0, "tool output\n"
+		notify("item/completed", map[string]any{"item": item})
+		patch := map[string]any{"id": "patch", "type": "fileChange", "status": "inProgress", "changes": []any{map[string]string{"path": "pelican.html"}}}
+		notify("item/started", map[string]any{"item": patch})
+		if err := os.WriteFile("pelican.html", []byte("<!doctype html><html><body><svg></svg></body></html>"), 0600); err != nil {
+			os.Exit(14)
+		}
+		patch["status"] = "completed"
+		notify("item/completed", map[string]any{"item": patch})
+	}
+	if mode == "sourceonly" {
 		text = "<!doctype html><html><body><svg></svg></body></html>"
 	}
 	chunks := []string{text[:len(text)/2], text[len(text)/2:]}
@@ -101,8 +122,28 @@ func TestPelicanHelper(t *testing.T) {
 	time.Sleep(20 * time.Second)
 	os.Exit(0)
 }
+
+func TestGeneratedHTMLOnlyUsesFilesInAttempt(t *testing.T) {
+	dir := t.TempDir()
+	if err := atomicWrite(filepath.Join(dir, "reply.txt"), []byte("<html></html>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicWrite(filepath.Join(dir, "empty.html"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if path, err := generatedHTML(dir); err != nil || path != "" {
+		t.Fatal("accepted text or empty file", path, err)
+	}
+	path := filepath.Join(dir, "site", "index.html")
+	if err := atomicWrite(path, []byte("<html></html>"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := generatedHTML(dir); err != nil || got != path {
+		t.Fatal("missing generated HTML", got, err)
+	}
+}
 func TestPelicanOutcomesAndResume(t *testing.T) {
-	for _, mode := range []string{"nohtml", "keyword", "error", "html", "sleep", "retry", "failed", "approval", "initerror"} {
+	for _, mode := range []string{"nohtml", "sourceonly", "keyword", "error", "html", "sleep", "retry", "failed", "approval", "initerror"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Setenv("RITALIN_TEST_PELICAN", mode)
 			t.Setenv("CODEX_CA_CERTIFICATE", "")
@@ -131,7 +172,7 @@ func TestPelicanOutcomesAndResume(t *testing.T) {
 			var displayed strings.Builder
 			e = pelican(ctx, s, &c, "trial", func(text string) { displayed.WriteString(text) })
 			switch mode {
-			case "nohtml", "keyword":
+			case "nohtml", "sourceonly", "keyword":
 				if e != nil || len(c.States) != 0 {
 					t.Fatal("expected deletion", e, c.States)
 				}
@@ -149,11 +190,20 @@ func TestPelicanOutcomesAndResume(t *testing.T) {
 				if !strings.Contains(displayed.String(), "\x00output:") {
 					t.Fatal("model text not displayed")
 				}
-				if strings.Count(displayed.String(), "<!doctype html>") != 1 {
+				visible := strings.ReplaceAll(displayed.String(), "\x00output:", "")
+				if strings.Count(visible, "已创建鹈鹕动画。") != 1 || strings.Count(visible, "tool output") != 1 {
 					t.Fatal("completed item duplicated streamed text")
 				}
+				for _, want := range []string{"commandExecution", "check pelican.html", "fileChange", "pelican.html", "exit 0"} {
+					if !strings.Contains(displayed.String(), want) {
+						t.Fatalf("tool event not shown: %s", want)
+					}
+				}
+				if strings.Contains(displayed.String(), "<!doctype") || strings.Contains(displayed.String(), "[31m") {
+					t.Fatal("source or ANSI escape leaked into output")
+				}
 				if mode == "retry" {
-					b, err := os.ReadFile(filepath.Join(filepath.Dir(c.States[0].HTML), "events.jsonl"))
+					b, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(c.States[0].HTML)), "events.jsonl"))
 					if err != nil || !strings.Contains(string(b), `"will_retry":true`) || !strings.Contains(string(b), "capacity retry") || !strings.Contains(string(b), "stderr") {
 						t.Fatal("retry/diagnostic not recorded", err)
 					}
