@@ -102,14 +102,15 @@ type Event struct {
 	Code string `json:"code,omitempty"`
 }
 type probeResult struct {
-	state   *State
-	attempt Attempt
-	err     error
+	nodeName string
+	state    *State
+	attempt  Attempt
+	err      error
 }
 
 func compact(ctx context.Context, n Node, proxyURL, home, model string, a auth) probeResult {
 	start := time.Now()
-	r := probeResult{attempt: Attempt{Node: n.ID, Started: stamp(), Events: []Event{}}}
+	r := probeResult{nodeName: n.Name, attempt: Attempt{Node: n.ID, Started: stamp(), Events: []Event{}}}
 	finish := func(err error) probeResult {
 		r.err = err
 		if err != nil {
@@ -287,15 +288,19 @@ func probeAll(ctx context.Context, s *Store, c *Config, emit Emit) ([]string, er
 				}
 			}
 		}
-		status := uiText(c.Language, "候选已保存")
-		if r.err != nil {
-			status = r.err.Error()
-		}
-		emit(fmt.Sprintf("compact %d/%d · %s", done, len(c.Nodes), status))
+		emit(r.progress(done, len(c.Nodes), c.Language))
 	}
 	emit(uiText(c.Language, "探测记录：") + dir)
 	if saveErr != nil {
 		return ids, saveErr
 	}
 	return ids, ctx.Err()
+}
+
+func (r probeResult) progress(done, total int, language string) string {
+	status := uiText(language, "候选已保存")
+	if r.err != nil {
+		status = r.err.Error()
+	}
+	return fmt.Sprintf("compact %d/%d · %s · %s", done, total, safeText(r.nodeName), status)
 }
