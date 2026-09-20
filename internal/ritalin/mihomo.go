@@ -1,0 +1,282 @@
+package ritalin
+
+import (
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const mihomoVersion = "v1.19.31"
+
+func exeName(s string) string {
+	if runtime.GOOS == "windows" {
+		return s + ".exe"
+	}
+	return s
+}
+func ensureMihomo(ctx context.Context, s *Store, c Config, emit func(string)) (string, error) {
+	if c.Mihomo != "" {
+		return exec.LookPath(ExpandPath(c.Mihomo))
+	}
+	for _, n := range []string{"clash_mihomo", "mihomo"} {
+		if p, e := exec.LookPath(n); e == nil {
+			return p, nil
+		}
+	}
+	dest := filepath.Join(s.Root, "clash", exeName("mihomo"))
+	if st, e := os.Stat(dest); e == nil && st.Size() > 0 {
+		return dest, nil
+	}
+	arch := runtime.GOARCH
+	if arch == "amd64" {
+		arch = "amd64-compatible"
+	}
+	ext := ".gz"
+	if runtime.GOOS == "windows" {
+		ext = ".zip"
+	}
+	name := "mihomo-" + runtime.GOOS + "-" + arch + "-" + mihomoVersion + ext
+	emit("通过系统代理下载 Mihomo（校验 SHA-256）…")
+	client := &http.Client{Transport: systemTransport(), Timeout: 3 * time.Minute}
+	defer client.CloseIdleConnections()
+	get := func(u string, limit int64) ([]byte, error) {
+		req, e := http.NewRequestWithContext(ctx, "GET", u, nil)
+		if e != nil {
+			return nil, e
+		}
+		resp, e := client.Do(req)
+		if e != nil {
+			return nil, errors.New("Mihomo 下载失败，请检查系统代理")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("下载 HTTP %d", resp.StatusCode)
+		}
+		return readLimit(resp.Body, limit)
+	}
+	b, e := get("https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/"+mihomoVersion, 4<<20)
+	if e != nil {
+		return "", e
+	}
+	var rel struct {
+		Assets []struct {
+			Name   string `json:"name"`
+			URL    string `json:"browser_download_url"`
+			Digest string `json:"digest"`
+		}
+	}
+	if e = json.Unmarshal(b, &rel); e != nil {
+		return "", e
+	}
+	for _, a := range rel.Assets {
+		if a.Name != name {
+			continue
+		}
+		if !strings.HasPrefix(a.Digest, "sha256:") {
+			return "", errors.New("发布文件缺少 SHA-256，拒绝未校验下载")
+		}
+		b, e = get(a.URL, 100<<20)
+		if e != nil {
+			return "", e
+		}
+		if "sha256:"+hash(string(b)) != a.Digest {
+			return "", errors.New("Mihomo 校验失败")
+		}
+		var binary []byte
+		if ext == ".gz" {
+			r, err := gzip.NewReader(bytes.NewReader(b))
+			if err != nil {
+				return "", err
+			}
+			binary, e = readLimit(r, 200<<20)
+			r.Close()
+		} else {
+			z, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+			if err != nil {
+				return "", err
+			}
+			for _, f := range z.File {
+				if strings.HasSuffix(f.Name, ".exe") {
+					r, err := f.Open()
+					if err != nil {
+						return "", err
+					}
+					binary, e = readLimit(r, 200<<20)
+					r.Close()
+					break
+				}
+			}
+		}
+		if e != nil {
+			return "", e
+		}
+		if len(binary) == 0 {
+			return "", errors.New("压缩包缺少可执行文件")
+		}
+		return dest, atomicWrite(dest, binary, 0700)
+	}
+	return "", fmt.Errorf("未找到 %s；请在设置中指定本地 Mihomo", name)
+}
+func parseClash(b []byte) ([]Node, error) {
+	var doc struct {
+		Proxies []map[string]any `yaml:"proxies"`
+	}
+	if e := yaml.Unmarshal(b, &doc); e != nil {
+		return nil, errors.New("无效 Clash YAML")
+	}
+	if len(doc.Proxies) == 0 {
+		return nil, errors.New("没有 proxies 节点；不执行订阅中的规则/脚本/provider")
+	}
+	if len(doc.Proxies) > 1000 {
+		return nil, errors.New("最多导入 1000 个节点")
+	}
+	nodes := []Node{}
+	for _, p := range doc.Proxies {
+		if p["server"] == nil || p["port"] == nil || p["type"] == nil {
+			continue
+		}
+		label, _ := p["name"].(string)
+		if label == "" {
+			label = fmt.Sprint(p["type"])
+		}
+		// Strip chaining, interface and local resource references from untrusted nodes.
+		for _, k := range []string{"dialer-proxy", "interface-name", "routing-mark", "certificate", "private-key", "private-key-path", "certificate-path"} {
+			delete(p, k)
+		}
+		p["skip-cert-verify"] = false
+		b, _ := json.Marshal(p)
+		nodes = append(nodes, Node{ID: hash(string(b))[:16], Name: label, Kind: "clash", Clash: p})
+	}
+	if len(nodes) == 0 {
+		return nil, errors.New("未找到可导入节点")
+	}
+	return nodes, nil
+}
+
+type ClashRun struct {
+	URLs map[string]string
+	stop func()
+}
+
+func (r *ClashRun) Close() {
+	if r != nil && r.stop != nil {
+		r.stop()
+	}
+}
+func startClash(ctx context.Context, s *Store, c Config, nodes []Node, emit func(string)) (*ClashRun, error) {
+	run := &ClashRun{URLs: map[string]string{}}
+	clash := []Node{}
+	for _, n := range nodes {
+		if n.Kind == "clash" {
+			clash = append(clash, n)
+		} else {
+			run.URLs[n.ID] = n.URL
+		}
+	}
+	if len(clash) == 0 {
+		return run, nil
+	}
+	bin, e := ensureMihomo(ctx, s, c, emit)
+	if e != nil {
+		return nil, e
+	}
+	dir, e := os.MkdirTemp(filepath.Join(s.Root, "clash"), "run-")
+	if os.IsNotExist(e) {
+		_ = os.MkdirAll(filepath.Join(s.Root, "clash"), 0700)
+		dir, e = os.MkdirTemp(filepath.Join(s.Root, "clash"), "run-")
+	}
+	if e != nil {
+		return nil, e
+	}
+	// This directory is generated by this call only. Remove config with node secrets on close.
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	proxies := []map[string]any{}
+	listeners := []map[string]any{}
+	sockets := []net.Listener{}
+	release := func() {
+		for _, l := range sockets {
+			l.Close()
+		}
+	}
+	for i, n := range clash {
+		l, e := net.Listen("tcp", "127.0.0.1:0")
+		if e != nil {
+			release()
+			cleanup()
+			return nil, e
+		}
+		sockets = append(sockets, l)
+		port := l.Addr().(*net.TCPAddr).Port
+		p := map[string]any{}
+		for k, v := range n.Clash {
+			p[k] = v
+		}
+		name := fmt.Sprintf("node-%d", i)
+		p["name"] = name
+		proxies = append(proxies, p)
+		listeners = append(listeners, map[string]any{"name": "in-" + name, "type": "mixed", "listen": "127.0.0.1", "port": port, "proxy": name, "udp": false})
+		run.URLs[n.ID] = fmt.Sprintf("http://127.0.0.1:%d", port)
+	}
+	cfg := map[string]any{"allow-lan": false, "mode": "rule", "log-level": "silent", "ipv6": true, "tun": map[string]any{"enable": false}, "dns": map[string]any{"enable": false}, "proxies": proxies, "listeners": listeners, "rules": []string{"MATCH,REJECT"}}
+	b, e := yaml.Marshal(cfg)
+	if e != nil {
+		release()
+		cleanup()
+		return nil, e
+	}
+	if e = atomicWrite(filepath.Join(dir, "config.yaml"), b, 0600); e != nil {
+		release()
+		cleanup()
+		return nil, e
+	}
+	cmd := exec.CommandContext(ctx, bin, "-d", dir, "-f", filepath.Join(dir, "config.yaml"))
+	cmd.Env = cleanProxyEnv(os.Environ())
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	release()
+	if e = cmd.Start(); e != nil {
+		cleanup()
+		return nil, e
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	run.stop = func() { _ = cmd.Process.Kill(); <-done; cleanup(); run.stop = nil }
+	deadline := time.Now().Add(12 * time.Second)
+	for _, n := range clash {
+		address := strings.TrimPrefix(run.URLs[n.ID], "http://")
+		for {
+			select {
+			case <-ctx.Done():
+				run.Close()
+				return nil, ctx.Err()
+			default:
+			}
+			conn, e := net.DialTimeout("tcp", address, 100*time.Millisecond)
+			if e == nil {
+				conn.Close()
+				break
+			}
+			if time.Now().After(deadline) {
+				run.Close()
+				return nil, errors.New("Mihomo 启动失败（配置/协议/端口不兼容）")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	return run, nil
+}

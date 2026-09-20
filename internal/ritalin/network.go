@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/http/httpproxy"
 	"golang.org/x/net/proxy"
 )
 
@@ -62,21 +63,15 @@ func transport(proxyURL string) (*http.Transport, error) {
 	return tr, nil
 }
 func systemProxy(req *http.Request) (*url.URL, error) {
-	u, e := http.ProxyFromEnvironment(req)
-	if u != nil || e != nil {
-		return u, e
+	c := httpproxy.FromEnvironment()
+	all := getenvAny("ALL_PROXY", "all_proxy")
+	if c.HTTPProxy == "" {
+		c.HTTPProxy = all
 	}
-	// Respect NO_PROXY (including loopback) even with ALL_PROXY fallback.
-	if req.URL.Hostname() == "localhost" || net.ParseIP(req.URL.Hostname()) != nil && net.ParseIP(req.URL.Hostname()).IsLoopback() {
-		return nil, nil
+	if c.HTTPSProxy == "" {
+		c.HTTPSProxy = all
 	}
-	if getenvAny("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy") != "" {
-		return nil, nil
-	}
-	if v := getenvAny("ALL_PROXY", "all_proxy"); v != "" {
-		return parseProxy(v)
-	}
-	return nil, nil
+	return c.ProxyFunc()(req.URL)
 }
 func systemTransport() *http.Transport { tr, _ := transport(""); tr.Proxy = systemProxy; return tr }
 func parseProxy(raw string) (*url.URL, error) {
