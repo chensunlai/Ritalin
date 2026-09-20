@@ -1,6 +1,22 @@
 # Ritalin
 
-A lightweight middleware for Codex, with a TUI for collecting, testing, and selecting turn states.
+A lightweight middleware for Codex, with a TUI for modifying and setting `x-codex-turn-state` in Codex requests.
+
+Built primarily for **Codex CLI**. To use Ritalin with the desktop app or VS Code extension, manually replace its backend CLI executable with `codex-ritalin` (keeping the original filename), or symlink that executable path to Ritalin. Maintain the replacement or symlink yourself after desktop/extension updates. You can ask Codex CLI to help locate the executable and perform these steps.
+
+Before replacing it, set **Settings → Launch command** to a separate, unmodified Codex CLI executable—not the path you are replacing—so Ritalin does not launch itself.
+
+Common locations to check; version and platform directories vary:
+
+| Client | Backend CLI location |
+| --- | --- |
+| [macOS desktop](https://learn.chatgpt.com/docs/reference/troubleshooting) | `/Applications/Codex.app/Contents/Resources/codex` |
+| Windows desktop | `<installation directory>\app\resources\codex.exe`. Microsoft Store installations are commonly under `C:\Program Files\WindowsApps\OpenAI.Codex_<version>\`. |
+| macOS VS Code extension | `~/.vscode/extensions/openai.chatgpt-<version>/bin/<platform>/codex` |
+| Windows VS Code extension | `%USERPROFILE%\.vscode\extensions\openai.chatgpt-<version>\bin\<platform>\codex.exe` |
+| VS Code Remote SSH | On the **remote machine**: `~/.vscode-server/extensions/openai.chatgpt-<version>/bin/<platform>/codex` |
+
+Keep the backend CLI compatible with the client version. Replacement is manual integration, not guaranteed desktop/extension compatibility; app signing or WindowsApps permissions may restrict it.
 
 ## How it works
 
@@ -66,16 +82,19 @@ codex-ritalin exec "Explain this project"
 codex-ritalin dosing
 ```
 
-Use **Tab** or **1–6** to switch sections, **↑/↓** to select, and **Enter** to open an action. Submit input with **Ctrl+S**. **Esc** cancels the current task and keeps completed progress.
+Choose **中文** or **English** on entry; press **L** to switch later.
+
+Follow **Proxies → Probe → Test → Use**. Already have a state? Add it directly in **Use**.
+
+Use **Tab** or **1–5** to switch sections, **↑/↓** to select, and **Enter** to act. Submit input with **Ctrl+S**. **Esc** cancels a task and keeps completed progress. On narrower terminals, **Space** opens details. **PgUp/PgDn** scroll output; **End** returns to live output.
 
 | Section | What to do |
 | --- | --- |
-| HTTP / SOCKS | Paste proxy URLs, one per line, or enter a file path to test and save working proxies. Delete entries or clear the list. |
-| Clash | Import a subscription URL or YAML file to test and save working nodes. Mihomo is downloaded automatically if needed. |
-| Compact | Choose the Codex home and model, then probe saved nodes to collect turn-state candidates. |
-| Pelican | Test candidates with live output and review the generated HTML and PNG. Press **g** to keep, **b** to reject, or **s** to review later. |
-| Usable states | Paste a state directly, select one with **Enter**, or delete one with **d**. |
-| Settings | Change the Codex launch command, model, reasoning effort, proxy, and optional executable paths. |
+| Proxies | Add HTTP/SOCKS proxies or a Clash subscription/file. Working nodes are saved automatically. Press **d** to delete a node. |
+| Probe | Choose the Codex home and model, then collect candidate states from your saved nodes. |
+| Test | Watch live output and review the generated HTML and PNG. Press **g** to keep, **b** to delete, or **s** to review later. |
+| Use | Add a state or select one with **Enter**. Press **Enter** again to deselect, or **d** to delete. |
+| Settings | Set the Codex launch command, reasoning effort, and language. Optional paths and network settings are under **Advanced**. |
 
 If `codex` is not directly executable on your machine, set a launch command as a JSON array:
 
