@@ -1,5 +1,7 @@
 # Ritalin
 
+> **Warning:** Using this tool may result in your account being banned.
+
 A lightweight middleware for Codex, with a TUI for modifying and setting `x-codex-turn-state` in Codex requests.
 
 Designed primarily for **Codex CLI**. Desktop and VS Code integration is covered in the appendix.
