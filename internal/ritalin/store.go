@@ -49,6 +49,7 @@ type State struct {
 type Config struct {
 	Version          int      `json:"version"`
 	Language         string   `json:"language,omitempty"`
+	RiskAcknowledged bool     `json:"risk_acknowledged,omitempty"`
 	Command          []string `json:"codex_command"`
 	ProbeHome        string   `json:"probe_codex_home,omitempty"`
 	Model            string   `json:"probe_model,omitempty"`

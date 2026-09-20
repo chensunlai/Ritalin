@@ -50,6 +50,7 @@ type ui struct {
 	viewport                         viewport.Model
 	logViewport                      viewport.Model
 	languagePick, details, paused    bool
+	warning                          bool
 	languageCursor                   int
 	advanced                         bool
 	form, formTitle, confirm         string
@@ -93,7 +94,7 @@ func newUI(s *Store, c Config) *ui {
 	input.SetHeight(5)
 	input.CharLimit = 1024 * 1024
 	input.ShowLineNumbers = false
-	m := &ui{store: s, c: c, width: 100, height: 32, input: input, viewport: viewport.New(60, 6), logViewport: viewport.New(32, 6), languagePick: c.Language != "zh" && c.Language != "en"}
+	m := &ui{store: s, c: c, width: 100, height: 32, input: input, viewport: viewport.New(60, 6), logViewport: viewport.New(32, 6), warning: !c.RiskAcknowledged, languagePick: c.Language != "zh" && c.Language != "en"}
 	if m.usableCount() > 0 {
 		m.tab = tabUse
 	} else if m.pendingCount() > 0 {
@@ -213,6 +214,15 @@ func (m *ui) entries() []entry {
 }
 func (m *ui) wait() tea.Cmd { ch := m.events; return func() tea.Msg { return <-ch } }
 func (m *ui) start(kind, id string, fn func(context.Context, *Config, Emit) ([]string, error)) tea.Cmd {
+	if (kind == "compact" || kind == "pelican") && m.c.Active != "" {
+		active := m.c.Active
+		m.c.Active = ""
+		if !m.save() {
+			m.c.Active = active
+			m.batch = false
+			return nil
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	m.busy = true
@@ -495,6 +505,21 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		key := v.String()
+		if m.warning {
+			switch key {
+			case "q", "esc", "ctrl+c":
+				return m, tea.Quit
+			case "enter":
+				m.c.RiskAcknowledged = true
+				if !m.save() {
+					m.c.RiskAcknowledged = false
+					return m, nil
+				}
+				m.warning = false
+				m.notice = ""
+			}
+			return m, nil
+		}
 		if m.languagePick {
 			switch key {
 			case "q", "ctrl+c":

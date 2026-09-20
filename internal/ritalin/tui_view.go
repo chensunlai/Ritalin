@@ -13,6 +13,7 @@ import (
 
 var (
 	uiAccent   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#007F78", Dark: "#5EEAD4"}).Bold(true)
+	uiWarning  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}).Bold(true)
 	uiMuted    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#64748B", Dark: "#8593A8"})
 	uiBorder   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#CBD5E1", Dark: "#38475C"})
 	uiSelected = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#00665E", Dark: "#99F6E4"}).Background(lipgloss.AdaptiveColor{Light: "#E2F3F0", Dark: "#163C3D"}).Bold(true)
@@ -341,10 +342,45 @@ func (m *ui) languageView(l dashboardLayout) string {
 	return lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, card)
 }
 
+func (m *ui) warningView(l dashboardLayout) string {
+	w := min(86, l.width-4)
+	width := w - 4
+	banner := "WARNING"
+	if width >= 42 && l.height >= 24 {
+		banner = "█   █  ███  ████  █   █ █ █   █  ███\n" +
+			"█   █ █   █ █   █ ██  █ █ ██  █ █   \n" +
+			"█ █ █ █████ ████  █ █ █ █ █ █ █ █ ██\n" +
+			"██ ██ █   █ █  █  █  ██ █ █  ██ █   █\n" +
+			"█   █ █   █ █   █ █   █ █ █   █  ███"
+	}
+	rows := []string{}
+	center := func(text string) {
+		for _, line := range strings.Split(text, "\n") {
+			rows = append(rows, lipgloss.PlaceHorizontal(width, lipgloss.Center, line))
+		}
+	}
+	center(uiWarning.Render(banner))
+	rows = append(rows, "")
+	center(uiWarning.Render(ansi.Wrap("使用本工具可能导致账号被封禁。", width, "")))
+	center(uiWarning.Render(ansi.Wrap("Using this tool may result in your account being banned.", width, "")))
+	rows = append(rows, "")
+	center("Enter 继续 / Continue")
+	center("Esc 退出 / Quit")
+	if m.notice != "" {
+		rows = append(rows, "")
+		center(uiMuted.Render(ansi.Truncate(safeText(m.notice), width, "…")))
+	}
+	card := pane("Ritalin", strings.Join(rows, "\n"), w, len(rows)+2, true)
+	return lipgloss.Place(l.width, l.height, lipgloss.Center, lipgloss.Center, card)
+}
+
 func (m *ui) View() string {
 	l := m.layout()
 	if l.width < 40 || l.height < 18 {
 		return fitRows("Ritalin\n"+m.t("请将终端放大至 40 × 18"), l.width, l.height)
+	}
+	if m.warning {
+		return m.warningView(l)
 	}
 	if m.languagePick {
 		return m.languageView(l)

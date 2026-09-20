@@ -1,6 +1,8 @@
 package ritalin
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -33,7 +35,7 @@ func dashboardFixture(t *testing.T) *ui {
 func TestDashboardFitsTerminal(t *testing.T) {
 	for _, size := range [][2]int{{32, 12}, {40, 18}, {60, 20}, {80, 24}, {100, 32}, {120, 32}, {160, 44}} {
 		for _, lang := range []string{"zh", "en"} {
-			for _, mode := range []string{"idle", "busy", "form", "confirm", "review", "language", "details"} {
+			for _, mode := range []string{"idle", "busy", "form", "confirm", "review", "language", "warning", "details"} {
 				t.Run(fmt.Sprintf("%dx%d/%s/%s", size[0], size[1], lang, mode), func(t *testing.T) {
 					m := dashboardFixture(t)
 					m.c.Language = lang
@@ -53,6 +55,9 @@ func TestDashboardFitsTerminal(t *testing.T) {
 						m.review = "state-two"
 					case "language":
 						m.chooseLanguage()
+					case "warning":
+						m.warning = true
+						m.notice = strings.Repeat("save error ", 20)
 					case "details":
 						m.details = true
 					}
@@ -114,6 +119,7 @@ func TestLanguageChoicePersistsAcrossLaunches(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := newUI(s, c)
+			m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // Acknowledge the first-launch warning.
 			if !m.languagePick {
 				t.Fatal("first launch did not ask for a language")
 			}
@@ -127,7 +133,7 @@ func TestLanguageChoicePersistsAcrossLaunches(t *testing.T) {
 				t.Fatal("language was not saved", err)
 			}
 			next := newUI(s, stored)
-			if next.languagePick || next.c.Language != lang {
+			if next.warning || next.languagePick || next.c.Language != lang {
 				t.Fatal("relaunch ignored the saved language")
 			}
 			// Language remains editable through Settings after startup.
@@ -164,6 +170,46 @@ func TestLanguageStartupWithExistingConfig(t *testing.T) {
 				t.Fatalf("language %q: picker = %v, want %v", lang, m.languagePick, wantPick)
 			}
 		})
+	}
+}
+
+func TestFirstLaunchWarningBeforeLanguage(t *testing.T) {
+	s := &Store{Root: t.TempDir()}
+	m := newUI(s, Defaults())
+	if !m.warning || !strings.Contains(m.View(), "账号被封禁") || !strings.Contains(m.View(), "account being banned") || strings.Contains(m.View(), "选择语言") {
+		t.Fatal("first launch did not show the risk warning before language selection")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	if !m.warning || m.c.Language != "" {
+		t.Fatal("language selection bypassed the warning")
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	stored, err := s.Load()
+	if err != nil || !stored.RiskAcknowledged || m.warning || !m.languagePick || !strings.Contains(m.View(), "选择语言") {
+		t.Fatal("warning confirmation was not saved before language selection", err)
+	}
+	if newUI(s, stored).warning {
+		t.Fatal("acknowledged warning appeared again")
+	}
+}
+
+func TestFirstLaunchWarningExitAndSaveFailure(t *testing.T) {
+	for _, key := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyCtrlC}, {Type: tea.KeyRunes, Runes: []rune("q")}} {
+		m := newUI(&Store{Root: t.TempDir()}, Defaults())
+		_, cmd := m.Update(key)
+		stored, err := m.store.Load()
+		if cmd == nil || err != nil || stored.RiskAcknowledged || m.c.RiskAcknowledged {
+			t.Fatal("exiting acknowledged the warning", err)
+		}
+	}
+	blocked := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := newUI(&Store{Root: filepath.Join(blocked, "ritalin")}, Defaults())
+	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.warning || m.c.RiskAcknowledged || !strings.Contains(m.View(), "保存失败") {
+		t.Fatal("warning save failure was hidden")
 	}
 }
 
@@ -255,6 +301,57 @@ func TestDashboardOutputAndScroll(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	if !strings.Contains(m.View(), "last line") {
 		t.Fatal("resize hid the latest output")
+	}
+}
+
+func TestProbeAndTrialDeselectBeforeStarting(t *testing.T) {
+	for _, kind := range []string{"compact", "pelican"} {
+		for _, failure := range []error{nil, context.Canceled, errors.New("test failure")} {
+			t.Run(fmt.Sprintf("%s/%v", kind, failure), func(t *testing.T) {
+				m := dashboardFixture(t)
+				m.c.Active = "state-one"
+				if !m.save() {
+					t.Fatal(m.notice)
+				}
+				cmd := m.start(kind, "state-two", func(_ context.Context, c *Config, _ Emit) ([]string, error) {
+					stored, err := m.store.Load()
+					if err != nil || c.Active != "" || stored.Active != "" {
+						t.Error("selected state was not cleared before the job started", err)
+					}
+					if findState(c, "state-one") == nil || findState(c, "state-two") == nil {
+						t.Error("deselecting deleted an available state or test candidate")
+					}
+					return nil, failure
+				})
+				if cmd == nil || m.c.Active != "" {
+					t.Fatal("job did not start with no selected state")
+				}
+				cancel := m.cancel
+				defer cancel()
+				m.Update(cmd())
+				stored, err := m.store.Load()
+				if err != nil || stored.Active != "" || m.c.Active != "" || m.busy {
+					t.Fatal("finished job restored the selected state", err)
+				}
+			})
+		}
+	}
+}
+
+func TestJobDoesNotStartIfDeselectCannotBeSaved(t *testing.T) {
+	m := dashboardFixture(t)
+	m.c.Active, m.batch = "state-one", true
+	blocked := filepath.Join(m.store.Root, "not-a-directory")
+	if err := os.WriteFile(blocked, []byte("test"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m.store.Root = filepath.Join(blocked, "ritalin")
+	cmd := m.start("compact", "", func(context.Context, *Config, Emit) ([]string, error) {
+		t.Error("job started despite failing to deselect the active state")
+		return nil, nil
+	})
+	if cmd != nil || m.busy || m.batch || m.c.Active != "state-one" || !strings.HasPrefix(m.notice, m.t("保存失败：")) {
+		t.Fatal("failed deselection was ignored")
 	}
 }
 
