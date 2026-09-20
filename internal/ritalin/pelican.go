@@ -70,7 +70,7 @@ func browserPath(ctx context.Context, s *Store, c Config, emit Emit) (string, er
 	if bin, ok := launcher.LookPath(); ok {
 		return bin, nil
 	}
-	emit("首次准备截图引擎（使用系统代理下载），之后自动复用…")
+	emit(uiText(c.Language, "准备截图引擎…"))
 	b := launcher.NewBrowser()
 	b.RootDir = filepath.Join(s.Root, "browser")
 	b.Context = ctx
@@ -79,7 +79,7 @@ func browserPath(ctx context.Context, s *Store, c Config, emit Emit) (string, er
 	return b.Get()
 }
 func render(ctx context.Context, s *Store, c Config, htmlPath, pngPath string, emit Emit) error {
-	emit("正在渲染图片…")
+	emit(uiText(c.Language, "正在渲染图片…"))
 	bin, e := browserPath(ctx, s, c, emit)
 	if e != nil {
 		return e
@@ -266,7 +266,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	var scanErr, errorLog error
 	sc := bufio.NewScanner(io.LimitReader(stdout, 32<<20))
 	sc.Buffer(make([]byte, 8192), 4<<20)
-	emit("鹈鹕测试：" + state.ID + " · " + model + " / " + c.Effort + "（系统代理）")
+	emit(fmt.Sprintf(uiText(c.Language, "测试：%s · %s / %s"), state.ID, model, c.Effort))
 	for sc.Scan() {
 		var ev struct {
 			Type    string          `json:"type"`
@@ -334,7 +334,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	}
 	if filtered.Load() {
 		removeState(c, id)
-		emit("首句关键词命中，已移除候选（不代表质量的科学判据）")
+		emit(uiText(c.Language, "关键词过滤：已移除候选"))
 		return s.Save(*c)
 	}
 	if ctx.Err() != nil {
@@ -351,7 +351,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	html := extractHTML(text)
 	if html == "" {
 		removeState(c, id)
-		emit("模型完成但无完整 HTML，已移除候选")
+		emit(uiText(c.Language, "模型完成但无完整 HTML，已移除候选"))
 		return s.Save(*c)
 	}
 	state.HTML = filepath.Join(dir, "pelican.html")

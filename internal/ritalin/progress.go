@@ -23,9 +23,9 @@ func downloadProgress(r io.Reader, total, limit int64, emit Emit) ([]byte, error
 			if time.Since(last) > 200*time.Millisecond || int64(out.Len()) == total {
 				if total > 0 {
 					pct := min(100, int(int64(out.Len())*100/total))
-					emit(fmt.Sprintf("下载 [%s%s] %3d%% · %.1f / %.1f MiB", strings.Repeat("█", pct/5), strings.Repeat("░", 20-pct/5), pct, float64(out.Len())/(1<<20), float64(total)/(1<<20)))
+					emit(fmt.Sprintf("↓ [%s%s] %3d%% · %.1f / %.1f MiB", strings.Repeat("█", pct/5), strings.Repeat("░", 20-pct/5), pct, float64(out.Len())/(1<<20), float64(total)/(1<<20)))
 				} else {
-					emit(fmt.Sprintf("下载中 · %.1f MiB（服务器未提供总大小）", float64(out.Len())/(1<<20)))
+					emit(fmt.Sprintf("↓ %.1f MiB", float64(out.Len())/(1<<20)))
 				}
 				last = time.Now()
 			}

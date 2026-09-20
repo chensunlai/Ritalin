@@ -23,10 +23,14 @@ func TestManualStateAndToggle(t *testing.T) {
 	}
 	id := m.c.States[0].ID
 	m.activate(entry{action: "select", id: id})
-	m.activate(entry{action: "replace"})
 	c, e := s.Load()
-	if e != nil || c.Active != id || c.Replace {
-		t.Fatal(c, e)
+	if e != nil || c.Active != id || !c.Replace {
+		t.Fatal("selecting a state did not enable it", e)
+	}
+	m.activate(entry{action: "select", id: id})
+	c, e = s.Load()
+	if e != nil || c.Active != "" {
+		t.Fatal("selecting the active state did not deselect it", e)
 	}
 	if strings.Contains(m.View(), syntheticState()) {
 		t.Fatal("full state exposed in list")

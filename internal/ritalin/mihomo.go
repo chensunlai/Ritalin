@@ -54,7 +54,7 @@ func ensureMihomo(ctx context.Context, s *Store, c Config, emit func(string)) (s
 		ext = ".zip"
 	}
 	name := "mihomo-" + runtime.GOOS + "-" + arch + "-" + mihomoVersion + ext
-	emit("通过系统代理下载 Mihomo…")
+	emit(uiText(c.Language, "下载 Mihomo…"))
 	client := &http.Client{Transport: systemTransport(), Timeout: 3 * time.Minute}
 	defer client.CloseIdleConnections()
 	get := func(u string, limit int64) ([]byte, error) {
@@ -64,7 +64,7 @@ func ensureMihomo(ctx context.Context, s *Store, c Config, emit func(string)) (s
 		}
 		resp, e := client.Do(req)
 		if e != nil {
-			return nil, errors.New("Mihomo 下载失败，请检查系统代理")
+			return nil, errors.New(uiText(c.Language, "Mihomo 下载失败，请检查网络连接"))
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {

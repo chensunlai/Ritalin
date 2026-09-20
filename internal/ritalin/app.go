@@ -44,7 +44,7 @@ func Run(args []string) (int, error) {
 	if os.Getenv("CODEX_HOME") == "" && os.Getenv("CODEXHOME") != "" {
 		env = setEnv(env, "CODEX_HOME", s.Home)
 	}
-	if state := findState(&c, c.Active); state != nil && state.Status == "usable" {
+	if state := findState(&c, c.Active); state != nil && state.Status == "usable" && c.Replace {
 		w, e := startWarp(s, state.Value, c.Replace, false, c.Upstream)
 		if e != nil {
 			return 1, e

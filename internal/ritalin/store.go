@@ -48,6 +48,7 @@ type State struct {
 }
 type Config struct {
 	Version          int      `json:"version"`
+	Language         string   `json:"language,omitempty"`
 	Command          []string `json:"codex_command"`
 	ProbeHome        string   `json:"probe_codex_home,omitempty"`
 	Model            string   `json:"probe_model,omitempty"`
@@ -87,7 +88,7 @@ func DefaultHome() string {
 }
 func OpenStore() *Store { h := DefaultHome(); return &Store{h, filepath.Join(h, "ritalin")} }
 func Defaults() Config {
-	return Config{Version: 1, Command: []string{"codex"}, Effort: "low", Replace: true, Nodes: []Node{}, States: []State{}}
+	return Config{Version: 1, Language: "zh", Command: []string{"codex"}, Effort: "low", Replace: true, Nodes: []Node{}, States: []State{}}
 }
 func (s *Store) Load() (Config, error) {
 	c := Defaults()

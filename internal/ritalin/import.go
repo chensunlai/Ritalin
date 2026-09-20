@@ -127,10 +127,10 @@ func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, e
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		emit(fmt.Sprintf("[%d/%d] %s · models 探测（不跟随系统代理）", i+1, len(nodes), safeText(n.Name)))
+		emit(fmt.Sprintf(uiText(c.Language, "[%d/%d] 检测 %s"), i+1, len(nodes), safeText(n.Name)))
 		reach, err := reachable(ctx, run.URLs[n.ID])
 		if err != nil {
-			emit("未保存：" + safeText(n.Name))
+			emit(uiText(c.Language, "未保存：") + safeText(n.Name))
 			continue
 		}
 		passed++
@@ -141,7 +141,7 @@ func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, e
 		n.Reach = reach
 		n.ExitIP = exitIP(ctx, run.URLs[n.ID])
 		if n.ExitIP != "" {
-			emit("当前 IP 回显出口：" + n.ExitIP + "（不代表目标域名必然相同）")
+			emit(uiText(c.Language, "出口 IP：") + n.ExitIP)
 		}
 		c.Nodes = append(c.Nodes, n)
 		saved[n.ID] = true
@@ -149,7 +149,7 @@ func importNodes(ctx context.Context, s *Store, c *Config, kind, input string, e
 			return e
 		}
 	}
-	emit(fmt.Sprintf("探测结束：%d/%d 可达；401 仅表示鉴权入口可达", passed, len(nodes)))
+	emit(fmt.Sprintf(uiText(c.Language, "检测完成：%d/%d 可用"), passed, len(nodes)))
 	return nil
 }
 func safeText(s string) string {

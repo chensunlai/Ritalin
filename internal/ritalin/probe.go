@@ -287,13 +287,13 @@ func probeAll(ctx context.Context, s *Store, c *Config, emit Emit) ([]string, er
 				}
 			}
 		}
-		status := "候选已保存"
+		status := uiText(c.Language, "候选已保存")
 		if r.err != nil {
 			status = r.err.Error()
 		}
 		emit(fmt.Sprintf("compact %d/%d · %s", done, len(c.Nodes), status))
 	}
-	emit("探测记录：" + dir)
+	emit(uiText(c.Language, "探测记录：") + dir)
 	if saveErr != nil {
 		return ids, saveErr
 	}

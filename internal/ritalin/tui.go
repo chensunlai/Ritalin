@@ -13,11 +13,18 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/gofrs/flock"
 )
 
-var titles = []string{"HTTP / SOCKS", "Clash 节点", "Compact 探测", "鹈鹕测试", "可用状态", "设置"}
+const (
+	tabProxies = iota
+	tabProbe
+	tabTest
+	tabUse
+	tabSettings
+)
+
+var titles = []string{"代理", "探测", "测试", "使用", "设置"}
 
 type tickMsg time.Time
 type logMsg string
@@ -29,11 +36,16 @@ type jobDone struct {
 }
 type entry struct{ label, action, id string }
 type ui struct {
+	bodyOffset                       int
 	store                            *Store
 	c                                Config
 	tab, cursor, width, height       int
 	input                            textarea.Model
 	viewport                         viewport.Model
+	logViewport                      viewport.Model
+	languagePick, details, paused    bool
+	languageCursor                   int
+	advanced                         bool
 	form, formTitle, confirm         string
 	notice, log, modelOutput, review string
 	busy                             bool
@@ -65,7 +77,18 @@ func runTUI(s *Store, c Config) error {
 	input.SetHeight(5)
 	input.CharLimit = 1024 * 1024
 	input.ShowLineNumbers = false
-	m := &ui{store: s, c: c, width: 100, height: 32, input: input, viewport: viewport.New(96, 10), notice: "各功能区独立使用。导入/探测不跟随系统代理；鹈鹕和下载使用系统代理。"}
+	m := &ui{store: s, c: c, width: 100, height: 32, input: input, viewport: viewport.New(60, 6), logViewport: viewport.New(32, 6), languagePick: true}
+	if m.usableCount() > 0 {
+		m.tab = tabUse
+	} else if m.pendingCount() > 0 {
+		m.tab = tabTest
+	} else if len(c.Nodes) > 0 {
+		m.tab = tabProbe
+	}
+	if c.Language == "en" {
+		m.languageCursor = 1
+	}
+	m.resize()
 	_, e = tea.NewProgram(m, tea.WithAltScreen()).Run()
 	if m.cancel != nil {
 		m.cancel()
@@ -78,56 +101,82 @@ func tick() tea.Cmd {
 }
 func (m *ui) save() {
 	if e := m.store.Save(m.c); e != nil {
-		m.notice = "保存失败：" + e.Error()
+		m.notice = m.t("保存失败：") + e.Error()
 	} else {
-		m.notice = "已保存"
+		m.notice = m.t("已保存")
 	}
 }
-func (m *ui) openForm(key, title, value string) {
+func (m *ui) openForm(key, title, value string) tea.Cmd {
 	m.form = key
-	m.formTitle = title
+	m.formTitle = m.t(title)
 	m.input.SetValue(value)
-	m.input.Focus()
+	m.bodyOffset = 0
+	cmd := m.input.Focus()
+	m.resize()
+	return cmd
 }
-func (m *ui) ask(text string, fn func()) { m.confirm = text; m.confirmFn = fn }
+func (m *ui) ask(text string, fn func()) { m.confirm = m.t(text); m.confirmFn = fn }
 func (m *ui) entries() []entry {
 	out := []entry{}
 	switch m.tab {
-	case 0, 1:
-		kind := "proxy"
-		if m.tab == 1 {
-			kind = "clash"
+	case tabProxies:
+		out = []entry{{"＋ HTTP / SOCKS", "import", "proxy"}, {"＋ Clash", "import", "clash"}}
+		if len(m.c.Nodes) > 0 {
+			out = append(out, entry{"下一步：探测 →", "next", "probe"})
 		}
-		out = append(out, entry{"＋ 导入并探测 models", "import", kind}, entry{"清空此类节点…", "clear", kind})
 		for _, n := range m.c.Nodes {
-			if n.Kind == kind {
-				out = append(out, entry{safeText(n.Name), "node", n.ID})
+			out = append(out, entry{safeText(n.Name), "node", n.ID})
+		}
+		for _, kind := range []string{"proxy", "clash"} {
+			for _, n := range m.c.Nodes {
+				if n.Kind == kind {
+					label := "清空 HTTP / SOCKS…"
+					if kind == "clash" {
+						label = "清空 Clash…"
+					}
+					out = append(out, entry{label, "clear", kind})
+					break
+				}
 			}
 		}
-	case 2:
-		out = []entry{{"对所有已保存节点执行 compact（最多并发 2）", "probe", ""}, {"指定探测 CODEX_HOME（空白使用默认）", "home", ""}, {"设置探测模型（空白读取 config.toml）", "model", ""}}
-	case 3:
-		out = []entry{{"开始 / 继续逐个测试未确认状态", "batch", ""}, {fmt.Sprintf("首句关键词快速过滤：%t（实验规则）", m.c.KeywordFilter), "keyword", ""}}
+	case tabProbe:
+		out = []entry{{"开始探测", "probe", ""}, {"凭证目录", "home", ""}, {"探测模型", "model", ""}}
+		if len(m.c.Nodes) == 0 {
+			out[0] = entry{"先添加代理 →", "next", "proxies"}
+		}
+		if m.pendingCount() > 0 {
+			out = append(out, entry{"下一步：测试 →", "next", "test"})
+		}
+	case tabTest:
+		if m.pendingCount() > 0 {
+			out = append(out, entry{"开始 / 继续测试", "batch", ""})
+		} else {
+			out = append(out, entry{"先探测状态 →", "next", "probe"})
+		}
+		if m.usableCount() > 0 {
+			out = append(out, entry{"下一步：使用 →", "next", "use"})
+		}
 		for _, s := range m.c.States {
 			if s.Status != "usable" {
-				out = append(out, entry{fmt.Sprintf("%s  %s  %d 字符 / %d 块 · %s", s.ID, s.Status, s.Metrics.Characters, s.Metrics.Blocks, safeText(s.Node)), "trial", s.ID})
+				out = append(out, entry{m.stateLabel(s) + "  · " + m.stateStatus(s.Status), "trial", s.ID})
 			}
 		}
-	case 4:
-		out = []entry{{"＋ 直接添加可用 turn-state（手动，未经实验确认）", "manual", ""}, {"停用当前状态，直接运行 Codex", "deactivate", ""}, {fmt.Sprintf("双向替换：%t（关闭用于对照）", m.c.Replace), "replace", ""}}
+	case tabUse:
+		out = []entry{{"＋ 添加状态", "manual", ""}}
 		for _, s := range m.c.States {
 			if s.Status == "usable" {
 				mark := "  "
-				if m.c.Active == s.ID {
+				if m.c.Active == s.ID && m.c.Replace {
 					mark = "● "
 				}
-				out = append(out, entry{fmt.Sprintf("%s%s  %d 字符 / %d 块 · %s", mark, s.ID, s.Metrics.Characters, s.Metrics.Blocks, safeText(s.Node)), "select", s.ID})
+				out = append(out, entry{mark + m.stateLabel(s), "select", s.ID})
 			}
 		}
-	case 5:
-		cmd, _ := json.Marshal(m.c.Command)
-		out = []entry{{"Codex 命令（JSON argv）：" + string(cmd), "command", ""}, {"探测 HOME：" + probeHome(m.store, m.c), "home", ""}, {"探测模型：" + m.c.Model, "model", ""}, {"鹈鹕推理强度：" + m.c.Effort, "effort", ""}, {"浏览器路径（空白自动）：" + m.c.Browser, "browser", ""}, {"Mihomo 路径（空白自动）：" + m.c.Mihomo, "mihomo", ""}, {"日常 warp 上游（空白=系统代理）：" + m.c.Upstream, "upstream", ""}}
-		out = append(out, entry{fmt.Sprintf("无沙箱渲染：%t（安全风险，默认关闭）", m.c.BrowserNoSandbox), "browser-sandbox", ""})
+	case tabSettings:
+		out = []entry{{"启动命令", "command", ""}, {"推理强度", "effort", ""}, {"界面语言", "language", ""}, {"高级设置 →", "advanced", ""}}
+		if m.advanced {
+			out = []entry{{"← 返回设置", "advanced", ""}, {"截图引擎", "browser", ""}, {"Mihomo 路径", "mihomo", ""}, {"上游代理", "upstream", ""}, {"关键词过滤", "keyword", ""}, {"无沙箱渲染", "browser-sandbox", ""}}
+		}
 	}
 	return out
 }
@@ -140,6 +189,8 @@ func (m *ui) start(kind, id string, fn func(context.Context, *Config, Emit) ([]s
 	m.lastJob = kind
 	m.log = ""
 	m.modelOutput = ""
+	m.paused = false
+	m.refreshOutput()
 	m.review = ""
 	m.events = make(chan tea.Msg, 256)
 	c := clone(m.c)
@@ -165,13 +216,18 @@ func (m *ui) nextTrial() tea.Cmd {
 		}
 	}
 	m.batch = false
-	m.notice = "没有未确认状态；所有进度已保存"
+	m.notice = m.t("没有未确认状态；所有进度已保存")
 	return nil
 }
 func (m *ui) applyForm() tea.Cmd {
 	key, value := m.form, strings.TrimSpace(m.input.Value())
 	m.form = ""
 	m.input.Blur()
+	reject := func(message string) tea.Cmd {
+		m.notice = message
+		m.form = key
+		return m.input.Focus()
+	}
 	switch key {
 	case "proxy", "clash":
 		return m.start("import", "", func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
@@ -180,14 +236,12 @@ func (m *ui) applyForm() tea.Cmd {
 	case "command":
 		var a []string
 		if e := json.Unmarshal([]byte(value), &a); e != nil || len(a) == 0 || a[0] == "" {
-			m.notice = `格式示例：["codex"] 或 ["node","/path/to/codex.js"]`
-			return nil
+			return reject(m.t(`格式示例：["codex"] 或 ["node","/path/to/codex.js"]`))
 		}
 		test := m.c
 		test.Command = a
 		if _, e := codexCommand(test, nil); e != nil {
-			m.notice = e.Error()
-			return nil
+			return reject(e.Error())
 		}
 		m.c.Command = a
 	case "home":
@@ -199,8 +253,7 @@ func (m *ui) applyForm() tea.Cmd {
 		case "low", "medium", "high", "xhigh", "max":
 			m.c.Effort = value
 		default:
-			m.notice = "请输入 low / medium / high / xhigh / max"
-			return nil
+			return reject(m.t("请输入 low / medium / high / xhigh / max"))
 		}
 	case "browser":
 		m.c.Browser = value
@@ -209,8 +262,7 @@ func (m *ui) applyForm() tea.Cmd {
 	case "upstream":
 		if value != "" {
 			if _, e := parseProxy(value); e != nil {
-				m.notice = e.Error()
-				return nil
+				return reject(e.Error())
 			}
 		}
 		m.c.Upstream = value
@@ -218,38 +270,46 @@ func (m *ui) applyForm() tea.Cmd {
 		value = strings.ReplaceAll(value, `\_`, "_")
 		metrics, e := parseState(value)
 		if e != nil {
-			m.notice = e.Error()
-			return nil
+			return reject(e.Error())
 		}
 		for _, s := range m.c.States {
 			if s.Value == value {
-				m.notice = "此状态已存在：" + s.ID
-				return nil
+				return reject(m.t("此状态已存在：") + s.ID)
 			}
 		}
-		m.c.States = append(m.c.States, State{ID: newID(), Value: value, Node: "手动添加（未经测试）", Created: stamp(), Status: "usable", Metrics: metrics, AuthHome: probeHome(m.store, m.c)})
+		m.c.States = append(m.c.States, State{ID: newID(), Value: value, Node: m.t("手动添加"), Created: stamp(), Status: "usable", Metrics: metrics, AuthHome: probeHome(m.store, m.c)})
 		m.save()
-		m.notice = "已添加可用列表；选择该项并按 Enter 才会启用"
+		m.notice = m.t("已添加可用列表；选择该项并按 Enter 才会启用")
 		return nil
 	}
 	m.save()
 	return nil
 }
 func (m *ui) activate(e entry) tea.Cmd {
+	m.bodyOffset = 0
 	switch e.action {
+	case "next":
+		m.tab = map[string]int{"proxies": tabProxies, "probe": tabProbe, "test": tabTest, "use": tabUse}[e.id]
+		m.cursor = 0
+		m.details = false
+	case "advanced":
+		m.advanced = !m.advanced
+		m.cursor = 0
+	case "language":
+		m.chooseLanguage()
 	case "browser-sandbox":
 		if m.c.BrowserNoSandbox {
 			m.c.BrowserNoSandbox = false
 			m.save()
 		} else {
-			m.ask("确认关闭 Chromium 沙箱？仅用于无法启用沙箱的隔离环境；JS/外部资源仍阻止。", func() { m.c.BrowserNoSandbox = true; m.save() })
+			m.ask("关闭渲染沙箱会降低隔离保护。仍要继续吗？", func() { m.c.BrowserNoSandbox = true; m.save() })
 		}
 	case "import":
 		title := "粘贴代理列表（每行一个）或本地文件路径"
 		if e.id == "clash" {
-			title = "Clash YAML 文件路径或订阅 URL（只提取 proxies）"
+			title = "Clash YAML 文件路径或订阅 URL"
 		}
-		m.openForm(e.id, title, "")
+		return m.openForm(e.id, title, "")
 	case "clear":
 		kind := e.id
 		m.ask("确认清空此类节点？已采集状态和实验文件保留。", func() {
@@ -263,7 +323,7 @@ func (m *ui) activate(e entry) tea.Cmd {
 			m.cursor = 0
 			m.save()
 		})
-	case "node":
+	case "delete-node":
 		id := e.id
 		m.ask("删除此节点？对应实验和 turn-state 保留。", func() {
 			out := []Node{}
@@ -277,18 +337,19 @@ func (m *ui) activate(e entry) tea.Cmd {
 			m.save()
 		})
 	case "probe":
+		if len(m.c.Nodes) == 0 {
+			m.notice = m.t("导入节点后即可开始探测")
+			return nil
+		}
 		return m.start("compact", "", func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
 			return probeAll(ctx, m.store, c, emit)
 		})
 	case "home":
-		m.openForm("home", "探测凭证 CODEX_HOME（不会复制凭证；空白默认）", m.c.ProbeHome)
+		return m.openForm("home", "凭证目录 CODEX_HOME（留空使用默认目录）", m.c.ProbeHome)
 	case "model":
-		m.openForm("model", "探测模型（空白读取指定 HOME/config.toml 的 model）", m.c.Model)
+		return m.openForm("model", "探测模型（留空使用 Codex 配置）", m.c.Model)
 	case "keyword":
 		m.c.KeywordFilter = !m.c.KeywordFilter
-		m.save()
-	case "replace":
-		m.c.Replace = !m.c.Replace
 		m.save()
 	case "batch":
 		m.batch = true
@@ -300,25 +361,26 @@ func (m *ui) activate(e entry) tea.Cmd {
 			return nil, pelican(ctx, m.store, c, id, emit)
 		})
 	case "manual":
-		m.openForm("manual", "粘贴完整 turn-state；仅校验布局，不能验证真实性或质量", "")
+		return m.openForm("manual", "粘贴 x-codex-turn-state", "")
 	case "select":
-		m.c.Active = e.id
-		m.save()
-		m.notice = "当前状态已选择；下次启动 codex-ritalin 生效"
-	case "deactivate":
-		m.c.Active = ""
+		if m.c.Active == e.id && m.c.Replace {
+			m.c.Active = ""
+		} else {
+			m.c.Active = e.id
+			m.c.Replace = true
+		}
 		m.save()
 	case "command":
 		v, _ := json.Marshal(m.c.Command)
-		m.openForm("command", "Codex 启动命令 JSON 数组（参数不经过 shell 重新解释）", string(v))
+		return m.openForm("command", "Codex 启动命令（JSON 数组）", string(v))
 	case "effort":
-		m.openForm("effort", "鹈鹕推理强度", m.c.Effort)
+		return m.openForm("effort", "鹈鹕推理强度", m.c.Effort)
 	case "browser":
-		m.openForm("browser", "浏览器可执行文件路径，空白自动查找/下载", m.c.Browser)
+		return m.openForm("browser", "浏览器可执行文件路径，空白自动查找/下载", m.c.Browser)
 	case "mihomo":
-		m.openForm("mihomo", "Mihomo 可执行文件路径，空白自动查找/下载", m.c.Mihomo)
+		return m.openForm("mihomo", "Mihomo 可执行文件路径，空白自动查找/下载", m.c.Mihomo)
 	case "upstream":
-		m.openForm("upstream", "日常 warp 上游，空白使用系统代理；不影响节点探测或鹈鹕", m.c.Upstream)
+		return m.openForm("upstream", "上游代理 URL（留空自动）", m.c.Upstream)
 	}
 	return nil
 }
@@ -335,7 +397,7 @@ func (m *ui) filter(team bool) {
 		}
 	}
 	m.save()
-	m.notice = fmt.Sprintf("按实验规则保留 %d 个候选；仍需鹈鹕人工确认", kept)
+	m.notice = fmt.Sprintf(m.t("已保留 %d 个候选，可继续测试"), kept)
 	m.probeIDs = nil
 }
 func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -343,9 +405,7 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = v.Width
 		m.height = v.Height
-		m.input.SetWidth(max(20, v.Width-8))
-		m.viewport.Width = max(20, v.Width-6)
-		m.viewport.Height = max(4, v.Height-13)
+		m.resize()
 	case tickMsg:
 		m.frame++
 		return m, tick()
@@ -367,16 +427,20 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.log = m.log[len(m.log)-16000:]
 			}
 		}
-		m.viewport.SetContent(m.log + "\n" + m.modelOutput)
-		m.viewport.GotoBottom()
+		m.refreshOutput()
 		return m, m.wait()
 	case jobDone:
 		m.c = v.config
 		m.busy = false
 		m.cancel = nil
-		m.notice = "完成"
+		m.notice = m.t("完成")
 		if v.err != nil {
 			m.notice = v.err.Error()
+			if errors.Is(v.err, context.Canceled) {
+				m.notice = m.t("已取消")
+			}
+			m.log += safeText(m.notice) + "\n"
+			m.refreshOutput()
 			m.batch = false
 		}
 		if m.quitAfter {
@@ -396,16 +460,50 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		key := v.String()
+		if m.languagePick {
+			switch key {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "up", "down", "left", "right", "tab", "shift+tab":
+				m.languageCursor = 1 - m.languageCursor
+			case "1", "2", "enter":
+				if key != "enter" {
+					m.languageCursor = int(key[0] - '1')
+				}
+				m.c.Language = []string{"zh", "en"}[m.languageCursor]
+				m.languagePick = false
+				m.save()
+			case "esc":
+				m.languagePick = false
+			}
+			return m, nil
+		}
+		if m.form == "" && m.confirm == "" && (key == "pgup" || key == "pgdown" || key == "end") {
+			if key == "end" {
+				m.paused = false
+				m.viewport.GotoBottom()
+				m.logViewport.GotoBottom()
+			} else {
+				m.paused = true
+				m.viewport, _ = m.viewport.Update(msg)
+				m.logViewport, _ = m.logViewport.Update(msg)
+			}
+			return m, nil
+		}
 		if m.busy {
 			if key == "esc" || key == "ctrl+c" {
 				m.cancel()
-				m.notice = "正在取消并保存进度…"
+				m.notice = m.t("正在取消并保存进度…")
 				if key == "ctrl+c" {
 					m.quitAfter = true
 				}
 			} else {
 				var cmd tea.Cmd
+				if key == "up" || key == "down" || key == "k" || key == "j" {
+					m.paused = true
+				}
 				m.viewport, cmd = m.viewport.Update(msg)
+				m.logViewport, _ = m.logViewport.Update(msg)
 				return m, cmd
 			}
 			return m, nil
@@ -430,7 +528,7 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else if key == "n" || key == "esc" {
 					m.confirm = ""
 					m.probeIDs = nil
-					m.notice = "未过滤；候选已保存为未确认"
+					m.notice = m.t("未过滤；候选已保存为未确认")
 				}
 				return m, nil
 			}
@@ -455,6 +553,14 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.review != "" {
+			if key == "up" || key == "down" {
+				if key == "up" {
+					m.bodyOffset = max(0, m.bodyOffset-1)
+				} else {
+					m.bodyOffset++
+				}
+				return m, nil
+			}
 			if key == "g" || key == "b" {
 				if key == "g" {
 					if s := findState(&m.c, m.review); s != nil {
@@ -472,34 +578,64 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key == "esc" || key == "s" {
 				m.review = ""
 				m.batch = false
-				m.notice = "保留待确认结果，下次可继续"
+				m.notice = m.t("保留待确认结果，下次可继续")
 			}
 			return m, nil
 		}
 		entries := m.entries()
+		if m.details && m.layout().detail == 0 {
+			switch key {
+			case "up", "k":
+				m.bodyOffset = max(0, m.bodyOffset-1)
+				return m, nil
+			case "down", "j":
+				m.bodyOffset++
+				return m, nil
+			case "esc", " ":
+				m.details = false
+				m.bodyOffset = 0
+				return m, nil
+			}
+		}
 		switch key {
+		case "l", "L":
+			m.chooseLanguage()
+		case " ":
+			m.details = !m.details
+			m.bodyOffset = 0
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "tab", "right":
 			m.tab = (m.tab + 1) % len(titles)
 			m.cursor = 0
+			m.details = false
 		case "shift+tab", "left":
 			m.tab = (m.tab + len(titles) - 1) % len(titles)
 			m.cursor = 0
-		case "1", "2", "3", "4", "5", "6":
+			m.details = false
+		case "1", "2", "3", "4", "5":
 			m.tab = int(key[0] - '1')
 			m.cursor = 0
+			m.details = false
 		case "up", "k":
 			m.cursor = max(0, m.cursor-1)
 		case "down", "j":
 			m.cursor = min(len(entries)-1, m.cursor+1)
 		case "enter":
 			if m.cursor >= 0 && m.cursor < len(entries) {
+				if entries[m.cursor].action == "node" {
+					m.details = !m.details
+					return m, nil
+				}
 				return m, m.activate(entries[m.cursor])
 			}
 		case "d":
 			if m.cursor >= 0 && m.cursor < len(entries) {
 				item := entries[m.cursor]
+				if item.action == "node" {
+					item.action = "delete-node"
+					return m, m.activate(item)
+				}
 				if item.action == "select" || item.action == "trial" {
 					id := item.id
 					m.ask("确认删除此 turn-state？HTML/截图和实验记录保留。", func() { removeState(&m.c, id); m.cursor = 0; m.save() })
@@ -507,77 +643,10 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, nil
-}
-func (m *ui) View() string {
-	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-	var b strings.Builder
-	b.WriteString(accent.Render("Ritalin · 利他林") + "  dosing\n")
-	nav := []string{}
-	for i, t := range titles {
-		s := fmt.Sprintf("%d %s", i+1, t)
-		if i == m.tab {
-			s = accent.Render("[" + s + "]")
-		}
-		nav = append(nav, s)
-	}
-	b.WriteString(strings.Join(nav, "  ") + "\n")
-	pending, usable := 0, 0
-	for _, s := range m.c.States {
-		if s.Status == "usable" {
-			usable++
-		} else {
-			pending++
-		}
-	}
-	b.WriteString(fmt.Sprintf("节点 %d  ·  待确认 %d  ·  可用 %d  ·  当前 %s  ·  替换 %t\n", len(m.c.Nodes), pending, usable, m.c.Active, m.c.Replace))
-	b.WriteString(strings.Repeat("─", max(10, min(m.width-2, 100))) + "\n")
 	if m.form != "" {
-		b.WriteString(m.formTitle + "\n\n" + m.input.View() + "\n\nCtrl+S 保存/开始 · Esc 返回\n")
-		return b.String()
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
-	if m.confirm != "" {
-		text := m.confirm
-		if text == "length-filter" {
-			text = "是否按密文长度快速过滤本轮候选？[y/n]\n这是用户提供的实验启发式，不证明模型质量。"
-		} else if text == "account-kind" {
-			text = "选择账户类型：\n[1] 个人 Free/Plus/Pro：292 字符、10 块\n[2] Team/Business：332 字符、12 块\n不匹配的本轮候选将移除。Esc 不过滤。"
-		} else {
-			text += " [y/n]"
-		}
-		b.WriteString(text + "\n")
-		return b.String()
-	}
-	if m.busy {
-		elapsed := time.Since(m.started).Round(time.Second)
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		b.WriteString(fmt.Sprintf("%s %s · 已等待 %s · Esc 取消并保留进度\n", frames[m.frame%len(frames)], m.lastJob, elapsed))
-		if elapsed >= 5*time.Second {
-			pulse := m.frame % 20
-			b.WriteString("[" + strings.Repeat("░", pulse) + "█" + strings.Repeat("░", 19-pulse) + "]  等待/处理中；下载开始后显示字节进度。\n")
-		}
-		b.WriteString(m.viewport.View())
-		return b.String()
-	}
-	if m.review != "" {
-		if s := findState(&m.c, m.review); s != nil {
-			b.WriteString("请打开文件检查动画与截图：\nHTML: " + s.HTML + "\nPNG:  " + s.PNG + "\n\n[g] 可用  [b] 降智/删除  [s/Esc] 稍后确认\n")
-			b.WriteString(m.viewport.View())
-		}
-		return b.String()
-	}
-	entries := m.entries()
-	height := max(3, m.height-12)
-	start := max(0, m.cursor-height+1)
-	for i := start; i < len(entries) && i < start+height; i++ {
-		label := entries[i].label
-		if i == m.cursor {
-			b.WriteString(accent.Render("› "+label) + "\n")
-		} else {
-			b.WriteString("  " + label + "\n")
-		}
-	}
-	b.WriteString("\n" + safeText(m.notice) + "\n")
-	b.WriteString("数据：" + m.store.Root + "\nTab/1–6 切区 · ↑↓ 选择 · Enter 操作 · d 删除状态 · q 退出\n")
-	return b.String()
+	return m, nil
 }
