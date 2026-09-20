@@ -107,7 +107,7 @@ func targetRequest(r *http.Request) bool {
 }
 
 // System upstream is chosen before overriding the child environment.
-func startWarp(s *Store, value string, replace bool, upstream string, observers ...func(string, string)) (*Warp, error) {
+func startWarp(s *Store, value string, replace bool, upstream string) (*Warp, error) {
 	if value != "" {
 		if _, e := parseState(value); e != nil {
 			return nil, e
@@ -177,18 +177,6 @@ func startWarp(s *Store, value string, replace bool, upstream string, observers 
 	p.OnResponse().DoFunc(func(r *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
 		if r != nil && replace && value != "" && targetRequest(ctx.Req) {
 			replaceExistingState(r.Header, value)
-		}
-		if r != nil && targetRequest(ctx.Req) && len(observers) > 0 {
-			// Observe plaintext only; never alter compression negotiation for display.
-			// Codex JSON events remain the fallback for compressed output.
-			if (r.StatusCode == 101 && r.Header.Get("Sec-WebSocket-Extensions") == "") || strings.Contains(r.Header.Get("Content-Type"), "text/event-stream") {
-				tap := &observedBody{ReadCloser: r.Body, ws: r.StatusCode == 101, observe: observers[0]}
-				if writer, ok := r.Body.(io.Writer); ok && r.StatusCode == 101 {
-					r.Body = &observedSocket{observedBody: tap, Writer: writer}
-				} else if r.Header.Get("Content-Encoding") == "" {
-					r.Body = tap
-				}
-			}
 		}
 		return r
 	})

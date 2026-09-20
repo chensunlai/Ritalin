@@ -49,7 +49,7 @@ func TestWarpMissingHeadersStayMissing(t *testing.T) {
 		fmt.Fprint(w, "unchanged")
 	}))
 	defer origin.Close()
-	warp, err := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(string, string) {})
+	warp, err := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,8 +121,7 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 			}))
 			defer up.Close()
 			store := &Store{Root: t.TempDir()}
-			deltas := make(chan string, 4)
-			warp, e := startWarp(store, syntheticState(), enabled, up.URL, func(kind, text string) { deltas <- text })
+			warp, e := startWarp(store, syntheticState(), enabled, up.URL)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -173,25 +172,9 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 			if len(times) != 2 || times[1].Sub(times[0]) < 150*time.Millisecond {
 				t.Fatal("SSE buffered")
 			}
-			if <-deltas != "one" || <-deltas != "two" {
-				t.Fatal("not observed")
-			}
 		})
 	}
 }
-func TestObserverFragmentedWebSocket(t *testing.T) {
-	got := ""
-	tap := &observedBody{ws: true, observe: func(kind, text string) { got += text }}
-	message := []byte(`{"type":"response.output_text.delta","delta":"hello"}`)
-	frame := append([]byte{0x81, byte(len(message))}, message...)
-	for _, b := range frame {
-		tap.feed([]byte{b})
-	}
-	if got != "hello" {
-		t.Fatal(got)
-	}
-}
-
 func TestWarpWebSocketUpgrade(t *testing.T) {
 	delta := []byte(`{"type":"response.output_text.delta","delta":"websocket text"}`)
 	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -216,8 +199,7 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 		rw.Flush()
 	}))
 	defer origin.Close()
-	observed := make(chan string, 1)
-	warp, e := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(kind, text string) { observed <- text })
+	warp, e := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -273,14 +255,6 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 	}
 	if string(b[2:]) != string(delta) {
 		t.Fatal("WS payload modified")
-	}
-	select {
-	case text := <-observed:
-		if text != "websocket text" {
-			t.Fatal(text)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("WS output not streamed")
 	}
 }
 func TestKeywordAndHTML(t *testing.T) {

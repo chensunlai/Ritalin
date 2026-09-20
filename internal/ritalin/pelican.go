@@ -1,8 +1,6 @@
 package ritalin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,8 +13,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -51,19 +47,6 @@ func extractHTML(s string) string {
 	return s[start : end+len("</html>")]
 }
 
-type limitedBuffer struct{ bytes.Buffer }
-
-func (b *limitedBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	if b.Len() < 32768 {
-		keep := 32768 - b.Len()
-		if len(p) > keep {
-			p = p[:keep]
-		}
-		_, _ = b.Buffer.Write(p)
-	}
-	return n, nil
-}
 func browserPath(ctx context.Context, s *Store, c Config, emit Emit) (string, error) {
 	if c.Browser != "" {
 		return exec.LookPath(ExpandPath(c.Browser))
@@ -186,46 +169,19 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return e
 	}
 	defer output.Close()
-	var outputMu sync.Mutex
-	var streamed, filtered atomic.Bool
-	firstStream := ""
-	display := func(text string) {
-		outputMu.Lock()
-		defer outputMu.Unlock()
-		_, _ = io.WriteString(output, text)
-		emit("\x00output:" + text)
-	}
-	observer := func(kind, text string) {
-		display(text)
-		if kind == "response.output_text.delta" {
-			streamed.Store(true)
-			outputMu.Lock()
-			if len(firstStream) < 8192 {
-				firstStream += text
-			}
-			reject := c.KeywordFilter && keywordRejected(firstStream)
-			outputMu.Unlock()
-			if reject {
-				filtered.Store(true)
-				cancel()
-			}
-		}
-	}
-	w, e := startWarp(s, state.Value, true, "", observer)
+	w, e := startWarp(s, state.Value, true, "")
 	if e != nil {
 		return e
 	}
 	defer w.Close()
-	args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "-m", model, "-c", "model_reasoning_effort=" + fmt.Sprintf("%q", c.Effort), "-c", `cli_auth_credentials_store="file"`, "-C", filepath.Join(s.Root, "pelican"), "-"}
-	cmd, e := codexCommand(*c, args)
+	cmd, e := codexCommand(*c, []string{"app-server", "--listen", "stdio://", "-c", `cli_auth_credentials_store="file"`})
 	if e != nil {
 		return e
 	}
 	cmd.Dir = filepath.Join(s.Root, "pelican")
-	cmd.Env = w.Env(os.Environ())
-	cmd.Env = setEnv(cmd.Env, "CODEX_HOME", home)
+	cmd.Env = setEnv(w.Env(os.Environ()), "CODEX_HOME", home)
 	for _, key := range []string{"OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"} {
-		env := []string{}
+		var env []string
 		for _, v := range cmd.Env {
 			if !strings.HasPrefix(v, key+"=") {
 				env = append(env, v)
@@ -233,108 +189,127 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		}
 		cmd.Env = env
 	}
-	cmd.Stdin = strings.NewReader(pelicanPrompt)
-	var stderr limitedBuffer
-	cmd.Stderr = &stderr
-	stdout, e := cmd.StdoutPipe()
-	if e != nil {
-		return e
-	}
-	prepareBackground(cmd)
-	if e = cmd.Start(); e != nil {
-		return e
-	}
-	done := make(chan struct{})
-	var doneOnce sync.Once
-	stopWatcher := func() { doneOnce.Do(func() { close(done) }) }
-	go func() {
-		select {
-		case <-runctx.Done():
-			stopBackground(cmd)
-		case <-done:
-		}
-	}()
-	defer stopWatcher()
 	events, e := os.OpenFile(filepath.Join(dir, "events.jsonl"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
-		stopBackground(cmd)
-		_ = cmd.Wait()
 		return e
 	}
 	defer events.Close()
 	enc := json.NewEncoder(events)
 	started := time.Now()
-	text, first := "", ""
-	var scanErr, errorLog error
-	sc := bufio.NewScanner(io.LimitReader(stdout, 32<<20))
-	sc.Buffer(make([]byte, 8192), 4<<20)
-	emit(fmt.Sprintf(uiText(c.Language, "测试：%s · %s / %s"), state.ID, model, c.Effort))
-	for sc.Scan() {
-		var ev struct {
-			Type    string          `json:"type"`
-			Message string          `json:"message"`
-			Error   json.RawMessage `json:"error"`
-			Item    struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"item"`
-		}
-		if json.Unmarshal(sc.Bytes(), &ev) != nil {
-			continue
-		}
-		msg := strings.ReplaceAll(ev.Message, a.Token, "[REDACTED]")
-		if len(ev.Error) > 0 {
-			var detail struct {
-				Message string `json:"message"`
-				Code    string `json:"code"`
+	redact := func(v string) string {
+		for _, secret := range []string{a.Token, a.Account, state.Value} {
+			if secret != "" {
+				v = strings.ReplaceAll(v, secret, "[REDACTED]")
 			}
-			if json.Unmarshal(ev.Error, &detail) == nil {
-				msg += " " + detail.Code + " " + detail.Message
+		}
+		return v
+	}
+	display := func(v string) error {
+		v = redact(v)
+		if _, err := io.WriteString(output, v); err != nil {
+			return err
+		}
+		emit("\x00output:" + v)
+		return nil
+	}
+	texts := map[string]string{}
+	var order []string
+	var firstID string
+	filtered := false
+	outputBytes := 0
+	filterErr := errors.New("keyword filter")
+	// All callbacks run on the app-server reader loop, in notification order.
+	notify := func(method string, p appParams) error {
+		message, info := p.Message, ""
+		if p.Error != nil {
+			message = p.Error.Message
+			info = string(p.Error.Info)
+		}
+		if p.Turn.Error != nil {
+			message = p.Turn.Error.Message
+			info = string(p.Turn.Error.Info)
+		}
+		if err := enc.Encode(map[string]any{
+			"at": stamp(), "elapsed_seconds": time.Since(started).Seconds(), "type": method,
+			"thread_id": p.ThreadID, "turn_id": p.TurnID, "item_type": p.Item.Type,
+			"message": redact(message), "error_info": redact(info), "will_retry": p.WillRetry,
+			"turn_status": p.Turn.Status,
+		}); err != nil {
+			return err
+		}
+		if strings.TrimSpace(message) != "" {
+			emit("Codex: " + safeText(redact(message)))
+		}
+		switch method {
+		case "initialized":
+			emit(uiText(c.Language, "Codex 已连接"))
+		case "thread/started":
+			emit(uiText(c.Language, "会话已创建"))
+		case "turn/started":
+			emit(uiText(c.Language, "正在生成…"))
+		case "item/agentMessage/delta", "item/completed":
+			id := p.ItemID
+			if method == "item/completed" {
+				if p.Item.Type != "agentMessage" {
+					return nil
+				}
+				id = p.Item.ID
+			}
+			if id == "" {
+				id = "message"
+			}
+			previous, exists := texts[id]
+			if !exists {
+				order = append(order, id)
+				if firstID == "" {
+					firstID = id
+				}
+			}
+			chunk := p.Delta
+			if method == "item/completed" {
+				texts[id] = p.Item.Text
+				// The completed item is authoritative, but must not duplicate deltas.
+				chunk = ""
+				if strings.HasPrefix(p.Item.Text, previous) {
+					chunk = strings.TrimPrefix(p.Item.Text, previous)
+				}
 			} else {
-				var text string
-				if json.Unmarshal(ev.Error, &text) == nil {
-					msg += " " + text
+				texts[id] = previous + chunk
+			}
+			outputBytes += len(chunk)
+			if outputBytes > 32<<20 || len(texts[id]) > 32<<20 {
+				return errors.New("app-server output exceeds 32 MiB")
+			}
+			if chunk != "" {
+				if err := display(chunk); err != nil {
+					return err
 				}
 			}
-		}
-		msg = strings.ReplaceAll(msg, a.Token, "[REDACTED]")
-		if a.Account != "" {
-			msg = strings.ReplaceAll(msg, a.Account, "[ACCOUNT]")
-		}
-		if e = enc.Encode(map[string]any{"at": stamp(), "elapsed_seconds": time.Since(started).Seconds(), "type": ev.Type, "item_type": ev.Item.Type, "message": msg}); e != nil {
-			errorLog = e
-		}
-		if ev.Item.Type == "agent_message" && ev.Item.Text != "" {
-			if first == "" {
-				first = ev.Item.Text
-				if c.KeywordFilter && keywordRejected(first) {
-					filtered.Store(true)
-					stopBackground(cmd)
-					break
-				}
+			if id == firstID && c.KeywordFilter && keywordRejected(texts[id]) {
+				filtered = true
+				return filterErr
 			}
-			if ev.Type == "item.completed" {
-				text = ev.Item.Text
-			}
+		case "item/reasoning/summaryTextDelta", "item/plan/delta", "item/commandExecution/outputDelta":
+			return display(p.Delta)
 		}
-		if ev.Item.Text != "" && !streamed.Load() {
-			display(ev.Item.Text + "\n")
-		}
-		if strings.TrimSpace(msg) != "" {
-			emit("Codex: " + safeText(msg))
+		return nil
+	}
+	emit(fmt.Sprintf(uiText(c.Language, "测试：%s · %s / %s"), state.Node, model, c.Effort))
+	emit(uiText(c.Language, "正在启动 Codex…"))
+	runErr := appServerTurn(runctx, cmd, model, c.Effort, pelicanPrompt, notify)
+	if runErr != nil && !filtered {
+		if e = enc.Encode(map[string]any{"at": stamp(), "type": "client/error", "message": redact(runErr.Error())}); e != nil {
+			return e
 		}
 	}
-	scanErr = sc.Err()
-	waitErr := cmd.Wait()
-	stopWatcher()
-	meta := map[string]any{"state_id": id, "model": model, "effort": c.Effort, "started": started.UTC().Format(time.RFC3339), "seconds": time.Since(started).Seconds(), "keyword_rejected": filtered.Load(), "cancelled": ctx.Err() != nil, "automatic_retries": "Codex controlled; emitted error/retry events recorded"}
+	meta := map[string]any{"state_id": id, "model": model, "effort": c.Effort, "transport": "app-server/stdio",
+		"started": started.UTC().Format(time.RFC3339), "seconds": time.Since(started).Seconds(),
+		"keyword_rejected": filtered, "cancelled": ctx.Err() != nil, "completed": runErr == nil,
+		"automatic_retries": "Codex controlled; emitted error/retry events recorded"}
 	if e = s.Record(dir, "attempt.json", meta); e != nil {
 		return e
 	}
-	if errorLog != nil {
-		return errorLog
-	}
-	if filtered.Load() {
+	if filtered {
 		removeState(c, id)
 		emit(uiText(c.Language, "关键词过滤：已移除候选"))
 		return s.Save(*c)
@@ -345,11 +320,17 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 	if runctx.Err() != nil {
 		return runctx.Err()
 	}
-	if waitErr != nil || scanErr != nil {
-		state.LastError = "Codex 运行失败/响应中断，保留候选可重试"
+	if runErr != nil {
+		state.LastError = redact(runErr.Error())
 		_ = s.Save(*c)
 		return errors.New(state.LastError)
 	}
+	var complete strings.Builder
+	for _, id := range order {
+		complete.WriteString(texts[id])
+		complete.WriteByte('\n')
+	}
+	text := complete.String()
 	html := extractHTML(text)
 	if html == "" {
 		removeState(c, id)

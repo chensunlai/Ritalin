@@ -2,8 +2,12 @@ package ritalin
 
 // Only interface text is translated. Node names and model output stay intact.
 var englishUI = map[string]string{
-	"已取消":     "Cancelled",
-	"准备截图引擎…": "Preparing screenshot engine…", "正在渲染图片…": "Rendering image…",
+	"已取消":         "Cancelled",
+	"正在启动 Codex…": "Starting Codex…",
+	"Codex 已连接":   "Codex connected",
+	"会话已创建":       "Session created",
+	"正在生成…":       "Generating…",
+	"准备截图引擎…":     "Preparing screenshot engine…", "正在渲染图片…": "Rendering image…",
 	"下载 Mihomo…": "Downloading Mihomo…", "Mihomo 下载失败，请检查网络连接": "Could not download Mihomo. Check your connection.",
 	"测试：%s · %s / %s":     "Testing: %s · %s / %s",
 	"关键词过滤：已移除候选":         "Keyword filter: candidate removed",
