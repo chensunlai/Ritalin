@@ -45,7 +45,7 @@ func Run(args []string) (int, error) {
 		env = setEnv(env, "CODEX_HOME", s.Home)
 	}
 	if state := findState(&c, c.Active); state != nil && state.Status == "usable" && c.Replace {
-		w, e := startWarp(s, state.Value, c.Replace, false, c.Upstream)
+		w, e := startWarp(s, state.Value, c.Replace, c.Upstream)
 		if e != nil {
 			return 1, e
 		}

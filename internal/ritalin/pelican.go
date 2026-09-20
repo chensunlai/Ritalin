@@ -209,7 +209,7 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 			}
 		}
 	}
-	w, e := startWarp(s, state.Value, true, true, "", observer)
+	w, e := startWarp(s, state.Value, true, "", observer)
 	if e != nil {
 		return e
 	}

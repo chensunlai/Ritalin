@@ -7,12 +7,12 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.10.1
-	github.com/elazarl/goproxy v1.7.2
+	github.com/elazarl/goproxy v1.9.1
 	github.com/go-rod/rod v0.116.2
 	github.com/gofrs/flock v0.12.1
 	github.com/muesli/termenv v0.16.0
 	github.com/pelletier/go-toml/v2 v2.2.4
-	golang.org/x/net v0.43.0
+	golang.org/x/net v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -38,6 +38,6 @@ require (
 	github.com/ysmood/got v0.40.0 // indirect
 	github.com/ysmood/gson v0.7.3 // indirect
 	github.com/ysmood/leakless v0.9.0 // indirect
-	golang.org/x/sys v0.36.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 )

@@ -2,6 +2,7 @@ package ritalin
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -23,6 +24,68 @@ func syntheticState() string {
 	b[0] = 128
 	return base64.URLEncoding.EncodeToString(b)
 }
+func TestReplaceExistingState(t *testing.T) {
+	for _, initial := range []http.Header{
+		{},
+		{http.CanonicalHeaderKey(stateHeader): {""}},
+		{http.CanonicalHeaderKey(stateHeader): {"original"}},
+	} {
+		_, exists := initial[http.CanonicalHeaderKey(stateHeader)]
+		replaceExistingState(initial, syntheticState())
+		if got, present := initial[http.CanonicalHeaderKey(stateHeader)]; present != exists || (present && got[0] != syntheticState()) {
+			t.Fatalf("existing=%v, result=%v", exists, initial)
+		}
+	}
+}
+
+func TestWarpMissingHeadersStayMissing(t *testing.T) {
+	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, exists := r.Header[http.CanonicalHeaderKey(stateHeader)]; exists {
+			t.Error("missing request state was added")
+		}
+		if r.Header.Get("Accept-Encoding") != "gzip" {
+			t.Error("Accept-Encoding changed")
+		}
+		fmt.Fprint(w, "unchanged")
+	}))
+	defer origin.Close()
+	warp, err := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(string, string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer warp.Close()
+	warp.tr.Proxy = nil
+	warp.tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(origin.URL, "https://"))
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(origin.Certificate())
+	warp.tr.TLSClientConfig = &tls.Config{RootCAs: roots, ServerName: "example.com"}
+	ca, err := os.ReadFile(warp.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(ca)
+	u, _ := url.Parse(warp.URL)
+	cl := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u), TLSClientConfig: &tls.Config{RootCAs: pool}}, Timeout: 3 * time.Second}
+	defer cl.CloseIdleConnections()
+	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := cl.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if _, exists := resp.Header[http.CanonicalHeaderKey(stateHeader)]; exists {
+		t.Fatal("missing response state was added")
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil || string(body) != "unchanged" {
+		t.Fatalf("body changed: %q, %v", body, err)
+	}
+}
+
 func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
@@ -59,7 +122,7 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 			defer up.Close()
 			store := &Store{Root: t.TempDir()}
 			deltas := make(chan string, 4)
-			warp, e := startWarp(store, syntheticState(), enabled, false, up.URL, func(kind, text string) { deltas <- text })
+			warp, e := startWarp(store, syntheticState(), enabled, up.URL, func(kind, text string) { deltas <- text })
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -135,19 +198,26 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 		if r.Header.Get(stateHeader) != syntheticState() {
 			t.Error("WS request header not replaced")
 		}
+		if r.Header.Get("Accept-Encoding") != "gzip" || r.Header.Get("Sec-WebSocket-Extensions") != "permessage-deflate" {
+			t.Error("compression negotiation modified")
+		}
 		conn, rw, e := w.(http.Hijacker).Hijack()
 		if e != nil {
 			t.Error(e)
 			return
 		}
 		defer conn.Close()
-		fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n%s: server-original\r\n\r\n", stateHeader)
+		fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n%s: server-original\r\n", stateHeader)
+		for i := 0; i < 24; i++ {
+			fmt.Fprintf(rw, "X-Test-%d: value\r\n", i)
+		}
+		rw.WriteString("\r\n")
 		rw.Write(append([]byte{0x81, byte(len(delta))}, delta...))
 		rw.Flush()
 	}))
 	defer origin.Close()
 	observed := make(chan string, 1)
-	warp, e := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, true, "", func(kind, text string) { observed <- text })
+	warp, e := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(kind, text string) { observed <- text })
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -163,20 +233,41 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 	pool := x509.NewCertPool()
 	pool.AppendCertsFromPEM(ca)
 	u, _ := url.Parse(warp.URL)
-	cl := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u), TLSClientConfig: &tls.Config{RootCAs: pool}}, Timeout: 3 * time.Second}
-	defer cl.CloseIdleConnections()
-	req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses", nil)
-	req.Header.Set("Connection", "Upgrade")
-	req.Header.Set("Upgrade", "websocket")
-	resp, e := cl.Do(req)
+	conn, e := net.DialTimeout("tcp", u.Host, 3*time.Second)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer resp.Body.Close()
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	fmt.Fprint(conn, "CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: chatgpt.com:443\r\n\r\n")
+	if _, e := http.ReadResponse(bufio.NewReader(conn), nil); e != nil {
+		t.Fatal(e)
+	}
+	client := tls.Client(conn, &tls.Config{RootCAs: pool, ServerName: "chatgpt.com"})
+	defer client.Close()
+	fmt.Fprintf(client, "GET /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAccept-Encoding: gzip\r\nSec-WebSocket-Extensions: permessage-deflate\r\n%s: client-original\r\n\r\n", stateHeader)
+	var head []byte
+	buffer := make([]byte, 4096)
+	for reads := 1; !bytes.Contains(head, []byte("\r\n\r\n")); reads++ {
+		n, err := client.Read(buffer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		head = append(head, buffer[:n]...)
+		// Match the strict WebSocket client's small-packet handshake guard.
+		if reads > 64 && reads*128 > len(head) {
+			t.Fatal("handshake fragmented into excessive small TLS records")
+		}
+	}
+	end := bytes.Index(head, []byte("\r\n\r\n")) + 4
+	resp, e := http.ReadResponse(bufio.NewReader(bytes.NewReader(head[:end])), nil)
+	if e != nil {
+		t.Fatal(e)
+	}
 	if resp.StatusCode != 101 || resp.Header.Get(stateHeader) != syntheticState() {
 		t.Fatal("upgrade changed or missing replaced header")
 	}
-	b, e := io.ReadAll(resp.Body)
+	b, e := io.ReadAll(io.MultiReader(bytes.NewReader(head[end:]), client))
 	if e != nil {
 		t.Fatal(e)
 	}

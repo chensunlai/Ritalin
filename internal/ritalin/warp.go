@@ -106,9 +106,8 @@ func targetRequest(r *http.Request) bool {
 	return r != nil && r.URL.Scheme == "https" && ((r.URL.Hostname() == "chatgpt.com" && strings.HasPrefix(r.URL.Path, "/backend-api/codex/")) || (r.URL.Hostname() == "api.openai.com" && strings.HasPrefix(r.URL.Path, "/v1/")))
 }
 
-// System upstream is chosen before overriding the child environment. inject is only
-// used for independent pelican trials whose first request has no prior state.
-func startWarp(s *Store, value string, replace, inject bool, upstream string, observers ...func(string, string)) (*Warp, error) {
+// System upstream is chosen before overriding the child environment.
+func startWarp(s *Store, value string, replace bool, upstream string, observers ...func(string, string)) (*Warp, error) {
 	if value != "" {
 		if _, e := parseState(value); e != nil {
 			return nil, e
@@ -170,22 +169,19 @@ func startWarp(s *Store, value string, replace, inject bool, upstream string, ob
 		return goproxy.OkConnect, host
 	})
 	p.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
-		// Trial observation needs uncompressed WS frames; normal Codex stays untouched.
-		if len(observers) > 0 && targetRequest(r) {
-			r.Header.Del("Sec-WebSocket-Extensions")
-			r.Header.Del("Accept-Encoding")
-		}
-		if replace && value != "" && targetRequest(r) && (inject || r.Header.Get(stateHeader) != "") {
-			r.Header.Set(stateHeader, value)
+		if replace && value != "" && targetRequest(r) {
+			replaceExistingState(r.Header, value)
 		}
 		return r, nil
 	})
 	p.OnResponse().DoFunc(func(r *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		if r != nil && replace && value != "" && targetRequest(ctx.Req) && r.Header.Get(stateHeader) != "" {
-			r.Header.Set(stateHeader, value)
+		if r != nil && replace && value != "" && targetRequest(ctx.Req) {
+			replaceExistingState(r.Header, value)
 		}
 		if r != nil && targetRequest(ctx.Req) && len(observers) > 0 {
-			if r.StatusCode == 101 || strings.Contains(r.Header.Get("Content-Type"), "text/event-stream") {
+			// Observe plaintext only; never alter compression negotiation for display.
+			// Codex JSON events remain the fallback for compressed output.
+			if (r.StatusCode == 101 && r.Header.Get("Sec-WebSocket-Extensions") == "") || strings.Contains(r.Header.Get("Content-Type"), "text/event-stream") {
 				tap := &observedBody{ReadCloser: r.Body, ws: r.StatusCode == 101, observe: observers[0]}
 				if writer, ok := r.Body.(io.Writer); ok && r.StatusCode == 101 {
 					r.Body = &observedSocket{observedBody: tap, Writer: writer}
@@ -205,6 +201,11 @@ func startWarp(s *Store, value string, replace, inject bool, upstream string, ob
 	w := &Warp{URL: "http://" + ln.Addr().String(), CA: ca, server: server, ln: tl, tr: tr}
 	go server.Serve(tl)
 	return w, nil
+}
+func replaceExistingState(header http.Header, value string) {
+	if _, exists := header[http.CanonicalHeaderKey(stateHeader)]; exists {
+		header.Set(stateHeader, value)
+	}
 }
 func (w *Warp) Env(env []string) []string {
 	env = cleanProxyEnv(env)
