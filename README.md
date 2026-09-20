@@ -1,13 +1,54 @@
-# Ritalin-利他林
+# Ritalin · 给 Codex 做一组对照实验
 
-Codex 的轻量包装器。先安装并登录 Codex，再用 Go 1.24+ 构建：
+Ritalin 是 Codex 的轻量包装器。普通命令照常透传；`dosing` 打开终端管理界面，用于代理筛选、compact 状态采集、鹈鹕动画对照和状态选择。
+
+## 它怎么工作
+
+选中一个状态后，链路是 **Codex → 本地 warp → 系统代理/指定上游**。warp 替换目标 HTTPS 请求和响应中已有的 `x-codex-turn-state`，不修改模型正文或 WebSocket 消息。证书仅对本次 Codex 生效，不安装系统证书。不选择状态时直接运行 Codex；关闭替换时可保留相同代理链路做对照。
+
+状态长度和关键词只是实验启发式，不是官方“降智”判据。状态可能过期或绑定账号；请用相同账号、模型、提示词分别新建会话比较。
+
+## 一键安装
+
+先安装并登录 Codex。安装脚本自动识别系统与 CPU，从 [最新 Release](https://github.com/chensunlai/Ritalin/releases/latest) 下载单一二进制；重复执行即可更新，不需要 Go、Python 或手动安装截图工具。
+
+Linux / macOS（curl）：
 
 ```bash
-go build -trimpath -ldflags="-s -w" -o codex-ritalin .
-./codex-ritalin dosing
+curl -fsSL https://raw.githubusercontent.com/chensunlai/Ritalin/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-将二进制放到 PATH 后，像使用 Codex 一样使用它。普通参数、标准输入输出、工作目录和退出码透传；只有 `dosing` 进入管理界面。Windows 的输出名用 `codex-ritalin.exe`。
+Linux / macOS（wget）：
+
+```bash
+wget -qO- https://raw.githubusercontent.com/chensunlai/Ritalin/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Windows PowerShell（无需管理员）：
+
+```powershell
+irm https://raw.githubusercontent.com/chensunlai/Ritalin/main/install.ps1 | iex
+```
+
+指定版本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chensunlai/Ritalin/main/install.sh | RITALIN_VERSION=v0.1.0 sh
+```
+
+```powershell
+$env:RITALIN_VERSION = 'v0.1.0'; irm https://raw.githubusercontent.com/chensunlai/Ritalin/main/install.ps1 | iex
+```
+
+默认安装到 Linux/macOS 的 `~/.local/bin`、Windows 的 `%LOCALAPPDATA%\Programs\codex-ritalin`。可用环境变量 `RITALIN_INSTALL_DIR` 自定义。Windows 自动加入用户 PATH；Linux/macOS 可把上面的 `export PATH` 加入 shell 配置。下载遵循当前代理设置。
+
+提供 Linux x86_64、ARM64、x86 32 位、ARMv7，macOS Intel / Apple Silicon，Windows x64 / ARM64 / x86 包。截图引擎依赖系统兼容性，32 位/部分 ARM 环境可在设置中指定本机浏览器。
+
+## 使用
+
+正常使用与 Codex 一样，参数、标准输入输出、工作目录和退出码透传：
 
 ```bash
 codex-ritalin
@@ -19,7 +60,7 @@ codex-ritalin dosing
 界面中 `Tab` / `1–6` 切换功能区，方向键选择，`Enter` 操作，输入框 `Ctrl+S` 提交，`Esc` 返回或取消任务。
 
 1. **HTTP / SOCKS**：粘贴 `http://`、`https://`、`socks5://` 代理列表（支持认证、IPv6），或填写列表文件路径。探测 OpenAI / ChatGPT models，至少一个入口可达才保存。JSON 401 仅表示到达鉴权入口，不等于登录成功。不跟随系统代理、不失败后直连。可删除单个节点或清空本类。
-2. **Clash 节点**：填写 YAML 文件路径或订阅 URL，只提取 `proxies`，不加载订阅规则/TUN/provider。没有 Mihomo 时自动下载并校验 SHA-256；下载使用系统代理，节点运行不继承系统代理。显示耗时和下载进度，支持取消、删除、清空。
+2. **Clash 节点**：填写 YAML 文件路径或订阅 URL，只提取 `proxies`，不加载订阅规则/TUN/provider。没有 Mihomo 时自动下载；下载使用系统代理，节点运行不继承系统代理。显示耗时和下载进度，支持取消、删除、清空。
 3. **Compact 探测**：可指定凭证 `CODEX_HOME` 和模型，对所有保存节点最多并发 **2** 个请求。Mihomo 临时启动，结束即关闭。保存事件、turn-state、字符数、密文字节数及 16 字节块数。完成后可选快速过滤：个人号保留 **292 字符 / 10 块**；Team/Business 保留 **332 字符 / 12 块**。只过滤本轮，结果仍为“未确认”。
 4. **鹈鹕测试**：使用系统代理逐个测试，默认 `low`，实时显示并保存模型输出。首个请求注入待测状态，其后双向替换。可开启首句“内联 / 内嵌”快速排除。自动保存 HTML 和渲染 PNG，显示路径；`g` 确认可用，`b` 删除候选，`s` 稍后确认。`Esc` 停止并保留进度。网络/渲染失败保留候选供重试；模型正常结束但没有完整 HTML 才自动删除。
 5. **可用状态**：直接粘贴已有 turn-state，或选择人工确认过的状态。`Enter` 选为当前值，`d` 删除；下次启动 Codex 生效。关闭“双向替换”可用相同 warp 链路做对照；“停用当前状态”则直接启动 Codex。
@@ -45,6 +86,6 @@ ritalin/
 
 长度、块数和关键词是**实验启发式，不是官方质量判据**，布局解析不是解密或 MAC 验证。拿到状态与 compact 完成分别记录。固定状态可能过期或绑定账号；建议同账号、模型、提示词分别新建会话对照。实时面板只展示实际可见输出，不恢复隐藏推理。compact 不自动重试；Codex 自身发出的重试事件会记录。
 
-不要上传 `ritalin/`、凭证、节点密码、完整 turn-state 或 CA 私钥。仓库不包含真实实验数据。运行 `go test -race ./...` 做离线测试；可设置 `RITALIN_TEST_BROWSER` 执行实际截图测试。
+不要上传 `ritalin/`、凭证、节点密码、完整 turn-state 或 CA 私钥。仓库不包含真实实验数据。
 
 源码使用 **Apache-2.0**；独立下载的 [Mihomo](https://github.com/MetaCubeX/mihomo) 和截图引擎使用各自许可证。

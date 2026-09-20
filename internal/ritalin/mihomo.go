@@ -46,12 +46,15 @@ func ensureMihomo(ctx context.Context, s *Store, c Config, emit func(string)) (s
 	if arch == "amd64" {
 		arch = "amd64-compatible"
 	}
+	if arch == "arm" {
+		arch = "armv7"
+	}
 	ext := ".gz"
 	if runtime.GOOS == "windows" {
 		ext = ".zip"
 	}
 	name := "mihomo-" + runtime.GOOS + "-" + arch + "-" + mihomoVersion + ext
-	emit("通过系统代理下载 Mihomo（校验 SHA-256）…")
+	emit("通过系统代理下载 Mihomo…")
 	client := &http.Client{Transport: systemTransport(), Timeout: 3 * time.Minute}
 	defer client.CloseIdleConnections()
 	get := func(u string, limit int64) ([]byte, error) {
@@ -69,68 +72,42 @@ func ensureMihomo(ctx context.Context, s *Store, c Config, emit func(string)) (s
 		}
 		return downloadProgress(resp.Body, resp.ContentLength, limit, emit)
 	}
-	b, e := get("https://api.github.com/repos/MetaCubeX/mihomo/releases/tags/"+mihomoVersion, 4<<20)
+	b, e := get("https://github.com/MetaCubeX/mihomo/releases/download/"+mihomoVersion+"/"+name, 100<<20)
 	if e != nil {
 		return "", e
 	}
-	var rel struct {
-		Assets []struct {
-			Name   string `json:"name"`
-			URL    string `json:"browser_download_url"`
-			Digest string `json:"digest"`
+	var binary []byte
+	if ext == ".gz" {
+		r, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return "", err
+		}
+		binary, e = readLimit(r, 200<<20)
+		r.Close()
+	} else {
+		z, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+		if err != nil {
+			return "", err
+		}
+		for _, f := range z.File {
+			if strings.HasSuffix(f.Name, ".exe") {
+				r, err := f.Open()
+				if err != nil {
+					return "", err
+				}
+				binary, e = readLimit(r, 200<<20)
+				r.Close()
+				break
+			}
 		}
 	}
-	if e = json.Unmarshal(b, &rel); e != nil {
+	if e != nil {
 		return "", e
 	}
-	for _, a := range rel.Assets {
-		if a.Name != name {
-			continue
-		}
-		if !strings.HasPrefix(a.Digest, "sha256:") {
-			return "", errors.New("发布文件缺少 SHA-256，拒绝未校验下载")
-		}
-		b, e = get(a.URL, 100<<20)
-		if e != nil {
-			return "", e
-		}
-		if "sha256:"+hash(string(b)) != a.Digest {
-			return "", errors.New("Mihomo 校验失败")
-		}
-		var binary []byte
-		if ext == ".gz" {
-			r, err := gzip.NewReader(bytes.NewReader(b))
-			if err != nil {
-				return "", err
-			}
-			binary, e = readLimit(r, 200<<20)
-			r.Close()
-		} else {
-			z, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
-			if err != nil {
-				return "", err
-			}
-			for _, f := range z.File {
-				if strings.HasSuffix(f.Name, ".exe") {
-					r, err := f.Open()
-					if err != nil {
-						return "", err
-					}
-					binary, e = readLimit(r, 200<<20)
-					r.Close()
-					break
-				}
-			}
-		}
-		if e != nil {
-			return "", e
-		}
-		if len(binary) == 0 {
-			return "", errors.New("压缩包缺少可执行文件")
-		}
-		return dest, atomicWrite(dest, binary, 0700)
+	if len(binary) == 0 {
+		return "", errors.New("压缩包缺少可执行文件")
 	}
-	return "", fmt.Errorf("未找到 %s；请在设置中指定本地 Mihomo", name)
+	return dest, atomicWrite(dest, binary, 0700)
 }
 func parseClash(b []byte) ([]Node, error) {
 	var doc struct {

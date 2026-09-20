@@ -1,6 +1,7 @@
 /codex-ritalin
 /codex-ritalin.exe
 /dist/
+/.release-private/
 /.codex/
 /ritalin/
 /.testdata/
