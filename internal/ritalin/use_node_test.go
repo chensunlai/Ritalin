@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -178,8 +179,12 @@ func TestStartUseWarpDefaultAndFailure(t *testing.T) {
 }
 
 func TestUseNodeLoopbackRouting(t *testing.T) {
-	for _, kind := range []string{"proxy", "clash"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, scenario := range []struct {
+		kind string
+		test bool
+	}{{"proxy", false}, {"clash", false}, {"proxy", true}, {"clash", true}} {
+		t.Run(fmt.Sprintf("%s/test=%v", scenario.kind, scenario.test), func(t *testing.T) {
+			kind := scenario.kind
 			bin := os.Getenv("RITALIN_TEST_MIHOMO")
 			if kind == "clash" && bin == "" {
 				t.Skip("set RITALIN_TEST_MIHOMO for the loopback Mihomo routing test")
@@ -235,7 +240,24 @@ func TestUseNodeLoopbackRouting(t *testing.T) {
 			u, _ := url.Parse(upstream.URL)
 			port, _ := strconv.Atoi(u.Port())
 			n.Clash = map[string]any{"type": "http", "server": u.Hostname(), "port": port}
-			warp, closeWarp, err := startUseWarp(context.Background(), m.store, m.c, &m.c.States[0], func(string) {})
+			var warp *Warp
+			var closeWarp func()
+			var err error
+			var display strings.Builder
+			var displayMu sync.Mutex
+			if scenario.test {
+				// Test source wins even when normal use chose a different node,
+				// replacement is disabled, and another state is active.
+				m.c.UseNode, m.c.Replace, m.c.Active = false, false, "state-two"
+				m.c.States[0].UseNodeID = "node-two"
+				warp, closeWarp, err = startTestWarp(context.Background(), m.store, m.c, &m.c.States[0], func(s string) {
+					displayMu.Lock()
+					defer displayMu.Unlock()
+					display.WriteString(s)
+				})
+			} else {
+				warp, closeWarp, err = startUseWarp(context.Background(), m.store, m.c, &m.c.States[0], func(string) {})
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -262,6 +284,12 @@ func TestUseNodeLoopbackRouting(t *testing.T) {
 			resp.Body.Close()
 			if err != nil || string(body) != "unchanged-body" || resp.Header.Get(stateHeader) != syntheticState() || proxyRequests.Load() != 1 || defaultRequests.Load() != 0 {
 				t.Fatal("node route or header replacement failed", err)
+			}
+			displayMu.Lock()
+			output := display.String()
+			displayMu.Unlock()
+			if scenario.test && (!strings.Contains(output, "server-state") || !strings.Contains(output, syntheticState()) || !strings.Contains(output, "Tokyo")) {
+				t.Fatal("test node or live state observation missing")
 			}
 			closeWarp()
 			if kind == "clash" {

@@ -256,6 +256,8 @@ func (m *ui) detailBody(width int) string {
 			add("可访问", strings.Join(n.Reach, ", "))
 			if e.action == "node" {
 				rows = append(rows, m.t("d 删除"))
+			} else if m.routeTest {
+				rows = append(rows, m.t("Enter 开始"))
 			} else {
 				rows = append(rows, m.t("Enter 使用"))
 			}
@@ -267,6 +269,13 @@ func (m *ui) detailBody(width int) string {
 			add("来源", s.Node)
 			add("状态", m.stateStatus(s.Status))
 			add("模型", s.Model)
+			if e.action == "trial" {
+				network := m.t("请选择节点")
+				if n := testNode(&m.c, s); n != nil {
+					network = n.Name
+				}
+				add("测试节点", network)
+			}
 			hint := m.t("Enter 开始")
 			if s.Status == "review" && s.HTML != "" {
 				hint = m.t("Enter 审核")

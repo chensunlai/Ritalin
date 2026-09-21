@@ -66,7 +66,7 @@ Choose **中文** or **English** on first launch; your choice is saved. **L** sw
 | --- | --- |
 | Proxies | Import HTTP/SOCKS proxies or a Clash subscription/file. Working nodes are saved automatically. |
 | Probe | Choose the Codex home and model, then collect candidate states through short “Reply with OK.” requests from your saved nodes. |
-| Test | Watch live output and review the HTML. Press **g** to keep, **b** to delete, **s** to review later, or **p** for an optional image preview. |
+| Test | Test through the state's source node; choose a checked node if no source is available. Watch live output and review the HTML. Press **g** to keep, **b** to delete, **s** to review later, or **p** for an optional image preview. |
 | Use | Add a state or select one with **Enter**. Choose **Default** or **Proxy node** under **Connection**. Node mode uses the state's saved source node; imported or manually added states require choosing a checked node. Press **Enter** again to deselect, or **d** to delete. |
 | Settings | Set the launch command, reasoning effort, and language. Optional paths and network settings are under **Advanced**. |
 

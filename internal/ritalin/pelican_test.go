@@ -165,6 +165,8 @@ func TestPelicanOutcomesAndResume(t *testing.T) {
 			c.Browser = filepath.Join(home, "missing-browser")
 			c.KeywordFilter = true
 			c.States = []State{{ID: "trial", Value: syntheticState(), Status: "pending", AuthHome: home, AccountHash: hash("test-account"), Model: "synthetic-model"}}
+			c.Nodes = []Node{{ID: "source", Name: "Test source", Kind: "proxy", URL: "http://127.0.0.1:9", Checked: stamp(), Reach: []string{"chatgpt"}}}
+			c.States[0].NodeID = "source"
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if mode == "sleep" {
@@ -242,6 +244,8 @@ func TestPelicanUsesCurrentLoginAcrossAccounts(t *testing.T) {
 			}
 			c.Command = []string{bin, "-test.run=^TestPelicanHelper$", "--"}
 			c.States = []State{{ID: "cross-account", Value: syntheticState(), Status: "pending", Model: "synthetic-model", AuthHome: filepath.Join(t.TempDir(), "missing-original-login"), AccountHash: hash("original-account")}}
+			c.Nodes = []Node{{ID: "source", Name: "Test source", Kind: "proxy", URL: "http://127.0.0.1:9", Checked: stamp(), Reach: []string{"chatgpt"}}}
+			c.States[0].NodeID = "source"
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := pelican(ctx, s, &c, "cross-account", func(string) {}); err != nil {

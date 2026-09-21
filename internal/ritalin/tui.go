@@ -54,6 +54,7 @@ type ui struct {
 	languageCursor                   int
 	advanced                         bool
 	routeState                       string
+	routeTest                        bool
 	routeCursor                      int
 	form, formTitle, confirm         string
 	formFocus                        int
@@ -279,19 +280,30 @@ func (m *ui) start(kind, id string, fn func(context.Context, *Config, Emit) ([]s
 func (m *ui) nextTrial() tea.Cmd {
 	for _, s := range m.c.States {
 		if s.Status != "usable" {
-			id := s.ID
-			if s.Status == "review" && s.HTML != "" {
-				m.review = id
-				return nil
-			}
-			return m.start("pelican", id, func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
-				return nil, pelican(ctx, m.store, c, id, emit)
-			})
+			return m.beginTrial(s.ID)
 		}
 	}
 	m.batch = false
 	m.notice = m.t("没有未确认状态；所有进度已保存")
 	return nil
+}
+
+func (m *ui) beginTrial(id string) tea.Cmd {
+	state := findState(&m.c, id)
+	if state == nil {
+		return nil
+	}
+	if state.Status == "review" && state.HTML != "" {
+		m.review = id
+		return nil
+	}
+	if testNode(&m.c, state) == nil {
+		m.pickTestNode(id)
+		return nil
+	}
+	return m.start("pelican", id, func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
+		return nil, pelican(ctx, m.store, c, id, emit)
+	})
 }
 func (m *ui) applyForm() tea.Cmd {
 	key, value := m.form, strings.TrimSpace(m.input.Value())
@@ -472,15 +484,8 @@ func (m *ui) activate(e entry) tea.Cmd {
 		m.batch = true
 		return m.nextTrial()
 	case "trial":
-		id := e.id
 		m.batch = false
-		if s := findState(&m.c, id); s != nil && s.Status == "review" && s.HTML != "" {
-			m.review = id
-			return nil
-		}
-		return m.start("pelican", id, func(ctx context.Context, c *Config, emit Emit) ([]string, error) {
-			return nil, pelican(ctx, m.store, c, id, emit)
-		})
+		return m.beginTrial(e.id)
 	case "manual":
 		return m.openForm("manual", "粘贴 x-codex-turn-state", "")
 	case "route-mode":
@@ -500,14 +505,21 @@ func (m *ui) activate(e entry) tea.Cmd {
 		m.closeNodePicker()
 	case "route-pick":
 		state := findState(&m.c, m.routeState)
-		if state == nil || state.Status != "usable" || confirmedNode(&m.c, e.id) == nil {
+		if state == nil || (!m.routeTest && state.Status != "usable") || confirmedNode(&m.c, e.id) == nil {
 			return nil
 		}
 		previous := clone(m.c)
 		state.UseNodeID = e.id
-		m.c.Active, m.c.Replace, m.c.UseNode = state.ID, true, true
+		if !m.routeTest {
+			m.c.Active, m.c.Replace, m.c.UseNode = state.ID, true, true
+		}
 		if m.save() {
+			testing := m.routeTest
+			m.routeTest = false
 			m.closeNodePicker()
+			if testing {
+				return m.beginTrial(state.ID)
+			}
 		} else {
 			m.c = previous
 		}

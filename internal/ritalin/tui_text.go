@@ -2,6 +2,9 @@ package ritalin
 
 // Only interface text is translated. Node names and model output stay intact.
 var englishUI = map[string]string{
+	"测试节点":    "Test node",
+	"测试节点：%s": "Test node: %s",
+	"请先为此候选选择检测通过的节点":           "Choose a checked node for this candidate first.",
 	"↑↓ 选择 · Enter 确认 · Esc 返回": "↑↓ Select · Enter Confirm · Esc Back",
 	"连接方式：默认连接":                 "Connection: Default",
 	"连接方式：代理节点":                 "Connection: Proxy node",

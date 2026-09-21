@@ -183,13 +183,11 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return e
 	}
 	defer output.Close()
-	w, e := startWarpObserved(s, state.Value, true, "", func(event warpStateEvent) {
-		emit(event.text(c.Language))
-	})
+	w, closeWarp, e := startTestWarp(runctx, s, *c, state, emit)
 	if e != nil {
 		return e
 	}
-	defer w.Close()
+	defer closeWarp()
 	cmd, e := codexCommand(*c, []string{"app-server", "--listen", "stdio://", "-c", `cli_auth_credentials_store="file"`, "-c", `sandbox_mode="danger-full-access"`, "-c", `approval_policy="never"`})
 	if e != nil {
 		return e
