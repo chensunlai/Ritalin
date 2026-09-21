@@ -138,13 +138,16 @@ func (m *ui) selectedEntry() entry {
 }
 
 func (m *ui) entryLabel(e entry) string {
-	if e.action == "node" || e.action == "select" || e.action == "trial" {
+	if e.action == "node" || e.action == "select" || e.action == "trial" || e.action == "route-pick" {
 		return e.label
 	}
 	return m.t(e.label)
 }
 
 func (m *ui) flowHint() string {
+	if m.routeState != "" {
+		return m.t("选择检测通过的节点，Esc 返回。")
+	}
 	switch m.tab {
 	case tabProxies:
 		return m.t("添加代理，自动检测可用性。")
@@ -230,7 +233,11 @@ func (m *ui) workBody(l dashboardLayout) (string, string) {
 		rows = append(rows, "")
 	}
 	rows = append(rows, uiMuted.Render(fmt.Sprintf("%d / %d", cursor+1, len(items))))
-	return m.t(titles[m.tab]), strings.Join(rows, "\n")
+	title := m.t(titles[m.tab])
+	if m.routeState != "" {
+		title = m.t("选择节点")
+	}
+	return title, strings.Join(rows, "\n")
 }
 
 func (m *ui) detailBody(width int) string {
@@ -243,11 +250,15 @@ func (m *ui) detailBody(width int) string {
 		rows = append(rows, uiMuted.Render(m.t(label)), safeText(value), "")
 	}
 	for _, n := range m.c.Nodes {
-		if e.action == "node" && n.ID == e.id {
+		if (e.action == "node" || e.action == "route-pick") && n.ID == e.id {
 			add("节点", n.Name)
 			add("出口 IP", n.ExitIP)
 			add("可访问", strings.Join(n.Reach, ", "))
-			rows = append(rows, m.t("d 删除"))
+			if e.action == "node" {
+				rows = append(rows, m.t("d 删除"))
+			} else {
+				rows = append(rows, m.t("Enter 使用"))
+			}
 			return ansi.Wrap(strings.Join(rows, "\n"), max(1, width), "")
 		}
 	}
@@ -261,6 +272,14 @@ func (m *ui) detailBody(width int) string {
 				hint = m.t("Enter 审核")
 			}
 			if e.action == "select" {
+				network := m.t("默认连接")
+				if m.c.UseNode {
+					network = m.t("请选择节点")
+					if n := useNode(&m.c, s); n != nil {
+						network = n.Name
+					}
+				}
+				add("使用连接", network)
 				hint = m.t("Enter 使用")
 				if m.c.Active == s.ID && m.c.Replace {
 					hint = m.t("Enter 取消选择")
@@ -272,6 +291,15 @@ func (m *ui) detailBody(width int) string {
 	}
 	text, value := "", ""
 	switch e.action {
+	case "route-mode":
+		text = "默认连接使用当前网络设置；代理节点使用为状态指定的节点。"
+	case "route-node":
+		text = "选择检测通过的节点，Esc 返回。"
+		if state := findState(&m.c, e.id); state != nil {
+			if n := useNode(&m.c, state); n != nil {
+				value = n.Name
+			}
+		}
 	case "import-states":
 		text = "从 JSON 文件导入到当前列表，自动跳过重复状态。"
 	case "export-states":
@@ -469,6 +497,9 @@ func (m *ui) View() string {
 	}
 	if l.width < 72 {
 		help = m.t("Tab 切区 · Enter 操作 · L 语言")
+	}
+	if m.routeState != "" {
+		help = m.t("↑↓ 选择 · Enter 确认 · Esc 返回")
 	}
 	if m.form != "" {
 		help = m.t("Enter 保存 · Tab 切换 · Esc 取消")

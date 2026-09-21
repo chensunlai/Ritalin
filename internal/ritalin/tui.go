@@ -53,6 +53,8 @@ type ui struct {
 	warning                          bool
 	languageCursor                   int
 	advanced                         bool
+	routeState                       string
+	routeCursor                      int
 	form, formTitle, confirm         string
 	formFocus                        int
 	notice, log, modelOutput, review string
@@ -152,6 +154,15 @@ func (m *ui) focusForm(focus int) tea.Cmd {
 func (m *ui) ask(text string, fn func()) { m.confirm = m.t(text); m.confirmFn = fn }
 func (m *ui) entries() []entry {
 	out := []entry{}
+	if m.routeState != "" {
+		out = append(out, entry{"← 返回", "route-cancel", ""})
+		for _, n := range m.c.Nodes {
+			if confirmedNode(&m.c, n.ID) != nil {
+				out = append(out, entry{safeText(n.Name), "route-pick", n.ID})
+			}
+		}
+		return out
+	}
 	switch m.tab {
 	case tabProxies:
 		out = []entry{{"＋ HTTP / SOCKS", "import", "proxy"}, {"＋ Clash", "import", "clash"}}
@@ -202,6 +213,14 @@ func (m *ui) entries() []entry {
 		}
 	case tabUse:
 		out = []entry{{"＋ 添加状态", "manual", ""}, {"导入…", "import-states", "usable"}, {"导出…", "export-states", "usable"}}
+		mode := "连接方式：默认连接"
+		if m.c.UseNode {
+			mode = "连接方式：代理节点"
+		}
+		out = append(out, entry{mode, "route-mode", ""})
+		if m.c.UseNode && findState(&m.c, m.c.Active) != nil {
+			out = append(out, entry{"选择使用节点…", "route-node", m.c.Active})
+		}
 		for _, s := range m.c.States {
 			if s.Status == "usable" {
 				mark := "  "
@@ -464,10 +483,42 @@ func (m *ui) activate(e entry) tea.Cmd {
 		})
 	case "manual":
 		return m.openForm("manual", "粘贴 x-codex-turn-state", "")
+	case "route-mode":
+		if !m.c.UseNode {
+			if state := findState(&m.c, m.c.Active); state != nil && useNode(&m.c, state) == nil {
+				m.pickUseNode(state.ID)
+				return nil
+			}
+		}
+		m.c.UseNode = !m.c.UseNode
+		if !m.save() {
+			m.c.UseNode = !m.c.UseNode
+		}
+	case "route-node":
+		m.pickUseNode(e.id)
+	case "route-cancel":
+		m.closeNodePicker()
+	case "route-pick":
+		state := findState(&m.c, m.routeState)
+		if state == nil || state.Status != "usable" || confirmedNode(&m.c, e.id) == nil {
+			return nil
+		}
+		previous := clone(m.c)
+		state.UseNodeID = e.id
+		m.c.Active, m.c.Replace, m.c.UseNode = state.ID, true, true
+		if m.save() {
+			m.closeNodePicker()
+		} else {
+			m.c = previous
+		}
 	case "select":
 		if m.c.Active == e.id && m.c.Replace {
 			m.c.Active = ""
 		} else {
+			if state := findState(&m.c, e.id); m.c.UseNode && state != nil && useNode(&m.c, state) == nil {
+				m.pickUseNode(e.id)
+				return nil
+			}
 			m.c.Active = e.id
 			m.c.Replace = true
 		}
@@ -723,6 +774,21 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		entries := m.entries()
+		if m.routeState != "" {
+			switch key {
+			case "esc":
+				m.closeNodePicker()
+			case "up", "k":
+				m.cursor = max(0, m.cursor-1)
+			case "down", "j":
+				m.cursor = min(len(entries)-1, m.cursor+1)
+			case "enter":
+				return m, m.activate(m.selectedEntry())
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		if m.details && m.layout().detail == 0 {
 			switch key {
 			case "up", "k":

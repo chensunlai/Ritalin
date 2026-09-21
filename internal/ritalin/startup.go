@@ -34,6 +34,12 @@ func startup(w io.Writer, s *Store, c Config, pause func(time.Duration)) {
 			upstream = u.Scheme + "://" + u.Host
 		}
 	}
+	if selected := findState(&c, c.Active); selected != nil && selected.Status == "usable" && c.Replace && c.UseNode {
+		upstream = t("请选择节点", "Select a node")
+		if n := useNode(&c, selected); n != nil {
+			upstream = t("代理节点", "Proxy node") + " · " + n.Name
+		}
+	}
 	command := ""
 	if len(c.Command) > 0 {
 		command = c.Command[0]

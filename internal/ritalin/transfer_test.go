@@ -22,6 +22,8 @@ func transferFixture(t *testing.T) *ui {
 	raw[12] ^= 1
 	m.c.States[1].Value = base64.URLEncoding.EncodeToString(raw)
 	m.c.States[0].AuthHome = "/private/credential-home"
+	m.c.States[0].NodeID, m.c.States[0].UseNodeID = "private-source-node", "private-use-node"
+	m.c.States[1].NodeID, m.c.States[1].UseNodeID = "private-source-node", "private-use-node"
 	m.c.States[1].AuthHome = "/private/credential-home"
 	m.c.States[1].AccountHash = "account-fingerprint"
 	m.c.Active = "state-one"
@@ -59,7 +61,7 @@ func TestStateFileRoundTrip(t *testing.T) {
 			if wire.States[0]["x-codex-turn-state"] != source.Value || wire.States[0]["value"] != nil {
 				t.Fatal("both pages must export the full state under x-codex-turn-state")
 			}
-			for _, forbidden := range []string{"auth_home", "HTML", "html", "png", "active", "credential-home", "hidden-password", "browser_no_sandbox"} {
+			for _, forbidden := range []string{"node_id", "use_node_id", "private-source-node", "private-use-node", "auth_home", "HTML", "html", "png", "active", "credential-home", "hidden-password", "browser_no_sandbox"} {
 				if strings.Contains(string(data), forbidden) {
 					t.Fatalf("non-portable field exported: %s", forbidden)
 				}
@@ -76,6 +78,9 @@ func TestStateFileRoundTrip(t *testing.T) {
 				t.Fatal(added, skipped, err)
 			}
 			got := c.States[0]
+			if got.NodeID != "" || got.UseNodeID != "" {
+				t.Fatal("imported state must require an explicit node selection")
+			}
 			if got.Value != source.Value || got.Node != source.Node || got.Model != source.Model || got.AccountHash != source.AccountHash || (got.Status == "usable") != targetUsable || c.Active != "" || got.HTML != "" || got.PNG != "" || got.ID == source.ID {
 				t.Fatal("portable state not restored correctly")
 			}

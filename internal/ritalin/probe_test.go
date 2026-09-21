@@ -100,7 +100,7 @@ func TestShortResponsesProbe(t *testing.T) {
 			if (r.err != nil) != tc.wantError || (r.state != nil) != tc.wantState || r.attempt.Completed != tc.wantCompleted {
 				t.Fatalf("unexpected result: %+v", r)
 			}
-			if r.state != nil && (r.state.ProbeCompleted != tc.wantCompleted || r.state.Status != "pending" || r.state.Value != state || r.state.AuthHome != "test-home") {
+			if r.state != nil && (r.state.ProbeCompleted != tc.wantCompleted || r.state.Status != "pending" || r.state.Value != state || r.state.AuthHome != "test-home" || r.state.NodeID != "test-node") {
 				t.Fatalf("unexpected candidate: %+v", r.state)
 			}
 			if strings.Contains(tc.body, "server_is_overloaded") && r.attempt.Events[0].Code != "server_is_overloaded" {

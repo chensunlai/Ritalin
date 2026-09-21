@@ -1,7 +1,9 @@
 package ritalin
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -46,11 +48,11 @@ func Run(args []string) (int, error) {
 		env = setEnv(env, "CODEX_HOME", s.Home)
 	}
 	if state := findState(&c, c.Active); state != nil && state.Status == "usable" && c.Replace {
-		w, e := startWarp(s, state.Value, c.Replace, c.Upstream)
+		w, closeWarp, e := startUseWarp(context.Background(), s, c, state, func(text string) { fmt.Fprintln(os.Stderr, safeText(text)) })
 		if e != nil {
 			return 1, e
 		}
-		defer w.Close()
+		defer closeWarp()
 		env = w.Env(env)
 	}
 	cmd.Env = env

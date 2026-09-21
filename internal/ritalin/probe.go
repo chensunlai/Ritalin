@@ -159,7 +159,7 @@ func probeStateWithTransport(ctx context.Context, n Node, home, model string, a 
 	if state != "" && resp.StatusCode == 200 {
 		if m, err := parseState(state); err == nil {
 			r.attempt.Metrics = &m
-			r.state = &State{ID: newID(), Value: state, Node: n.Name, Created: stamp(), Status: "pending", Metrics: m, AuthHome: home, AccountHash: hash(a.Account), Model: model, LastError: "探测尚未确认完成"}
+			r.state = &State{ID: newID(), Value: state, Node: n.Name, NodeID: n.ID, Created: stamp(), Status: "pending", Metrics: m, AuthHome: home, AccountHash: hash(a.Account), Model: model, LastError: "探测尚未确认完成"}
 		}
 	}
 	completed, failed := false, false

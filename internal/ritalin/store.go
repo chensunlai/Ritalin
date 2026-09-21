@@ -35,6 +35,8 @@ type State struct {
 	ID             string  `json:"id"`
 	Value          string  `json:"value"`
 	Node           string  `json:"node"`
+	NodeID         string  `json:"node_id,omitempty"`
+	UseNodeID      string  `json:"use_node_id,omitempty"`
 	Created        string  `json:"created"`
 	Status         string  `json:"status"` // pending, review, usable
 	Metrics        Metrics `json:"metrics"`
@@ -58,6 +60,7 @@ type Config struct {
 	BrowserNoSandbox bool     `json:"browser_no_sandbox"`
 	Mihomo           string   `json:"mihomo_path,omitempty"`
 	Upstream         string   `json:"warp_upstream,omitempty"`
+	UseNode          bool     `json:"use_node,omitempty"`
 	Replace          bool     `json:"replace"`
 	KeywordFilter    bool     `json:"keyword_filter"`
 	Active           string   `json:"active_state,omitempty"`
