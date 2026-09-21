@@ -524,7 +524,9 @@ func (m *ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.modelOutput = m.modelOutput[len(m.modelOutput)-256000:]
 			}
 		} else {
-			m.log += safeText(s) + "\n"
+			for _, line := range strings.Split(s, "\n") {
+				m.log += safeText(line) + "\n"
+			}
 			if len(m.log) > 16000 {
 				m.log = m.log[len(m.log)-16000:]
 			}

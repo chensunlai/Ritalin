@@ -183,7 +183,9 @@ func pelican(ctx context.Context, s *Store, c *Config, id string, emit Emit) err
 		return e
 	}
 	defer output.Close()
-	w, e := startWarp(s, state.Value, true, "")
+	w, e := startWarpObserved(s, state.Value, true, "", func(event warpStateEvent) {
+		emit(event.text(c.Language))
+	})
 	if e != nil {
 		return e
 	}

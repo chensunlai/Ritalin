@@ -108,6 +108,12 @@ func targetRequest(r *http.Request) bool {
 
 // System upstream is chosen before overriding the child environment.
 func startWarp(s *Store, value string, replace bool, upstream string) (*Warp, error) {
+	return startWarpObserved(s, value, replace, upstream, nil)
+}
+
+// observe only sees the outbound request header and the unmodified server
+// response header. It must not read bodies or change the supplied headers.
+func startWarpObserved(s *Store, value string, replace bool, upstream string, observe func(warpStateEvent)) (*Warp, error) {
 	if value != "" {
 		if _, e := parseState(value); e != nil {
 			return nil, e
@@ -172,9 +178,15 @@ func startWarp(s *Store, value string, replace bool, upstream string) (*Warp, er
 		if replace && value != "" && targetRequest(r) {
 			replaceExistingState(r.Header, value)
 		}
+		if observe != nil && targetRequest(r) {
+			observe(newWarpStateEvent(ctx.Session, r, nil, false))
+		}
 		return r, nil
 	})
 	p.OnResponse().DoFunc(func(r *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		if observe != nil && targetRequest(ctx.Req) {
+			observe(newWarpStateEvent(ctx.Session, ctx.Req, r, true))
+		}
 		if r != nil && replace && value != "" && targetRequest(ctx.Req) {
 			replaceExistingState(r.Header, value)
 		}

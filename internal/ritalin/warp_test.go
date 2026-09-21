@@ -49,7 +49,8 @@ func TestWarpMissingHeadersStayMissing(t *testing.T) {
 		fmt.Fprint(w, "unchanged")
 	}))
 	defer origin.Close()
-	warp, err := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "")
+	observed := make(chan warpStateEvent, 2)
+	warp, err := startWarpObserved(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(e warpStateEvent) { observed <- e })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +80,10 @@ func TestWarpMissingHeadersStayMissing(t *testing.T) {
 	defer resp.Body.Close()
 	if _, exists := resp.Header[http.CanonicalHeaderKey(stateHeader)]; exists {
 		t.Fatal("missing response state was added")
+	}
+	requestState, responseState := nextWarpState(t, observed), nextWarpState(t, observed)
+	if requestState.Present || responseState.Present || requestState.Response || !responseState.Response || responseState.HTTPStatus != 200 {
+		t.Fatal("absent headers must be observed as absent in both directions")
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil || string(body) != "unchanged" {
@@ -121,7 +126,8 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 			}))
 			defer up.Close()
 			store := &Store{Root: t.TempDir()}
-			warp, e := startWarp(store, syntheticState(), enabled, up.URL)
+			observed := make(chan warpStateEvent, 2)
+			warp, e := startWarpObserved(store, syntheticState(), enabled, up.URL, func(e warpStateEvent) { observed <- e })
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -155,6 +161,16 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 			}
 			if got := resp.Header.Get(stateHeader); got != expectedResp {
 				t.Fatalf("response got %q", got)
+			}
+			requestState, responseState := nextWarpState(t, observed), nextWarpState(t, observed)
+			if requestState.Response || !requestState.Present || len(requestState.Values) != 1 || requestState.Values[0] != expectedReq {
+				t.Fatal("observer must see the actual outbound state")
+			}
+			if !responseState.Response || !responseState.Present || len(responseState.Values) != 1 || responseState.Values[0] != "original-response" || responseState.HTTPStatus != 200 {
+				t.Fatal("observer must see the original server state, not the replacement")
+			}
+			if requestState.RequestID != responseState.RequestID || requestState.Method != "POST" || requestState.Path != "/backend-api/codex/responses" {
+				t.Fatal("request/response correlation lost")
 			}
 			if <-connected != "chatgpt.com:443" {
 				t.Fatal("wrong upstream CONNECT")
@@ -199,7 +215,8 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 		rw.Flush()
 	}))
 	defer origin.Close()
-	warp, e := startWarp(&Store{Root: t.TempDir()}, syntheticState(), true, "")
+	observed := make(chan warpStateEvent, 2)
+	warp, e := startWarpObserved(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(e warpStateEvent) { observed <- e })
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -248,6 +265,10 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 	}
 	if resp.StatusCode != 101 || resp.Header.Get(stateHeader) != syntheticState() {
 		t.Fatal("upgrade changed or missing replaced header")
+	}
+	requestState, responseState := nextWarpState(t, observed), nextWarpState(t, observed)
+	if len(requestState.Values) != 1 || requestState.Values[0] != syntheticState() || len(responseState.Values) != 1 || responseState.Values[0] != "server-original" || responseState.HTTPStatus != 101 {
+		t.Fatal("WebSocket handshake headers were not observed before response replacement")
 	}
 	b, e := io.ReadAll(io.MultiReader(bytes.NewReader(head[end:]), client))
 	if e != nil {
