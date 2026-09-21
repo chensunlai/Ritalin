@@ -10,12 +10,13 @@ import (
 )
 
 const stateFileFormat = "codex-ritalin/states"
+const stateFileVersion = 2
 const stateFileLimit = 8 << 20
 
 // A portable list, not a configuration backup. Never export credentials,
 // proxy configuration, local paths, or the active selection.
 type portableState struct {
-	Value       string `json:"value"`
+	Value       string `json:"x-codex-turn-state"`
 	Node        string `json:"node,omitempty"`
 	Model       string `json:"model,omitempty"`
 	Created     string `json:"created,omitempty"`
@@ -28,10 +29,10 @@ type stateFile struct {
 }
 
 func exportStates(c Config, path string, usable bool) (int, error) {
-	data := stateFile{Format: stateFileFormat, Version: 1, States: []portableState{}}
+	data := stateFile{Format: stateFileFormat, Version: stateFileVersion, States: []portableState{}}
 	for _, s := range c.States {
 		if (s.Status == "usable") == usable {
-			data.States = append(data.States, portableState{s.Value, s.Node, s.Model, s.Created, s.AccountHash})
+			data.States = append(data.States, portableState{Value: s.Value, Node: s.Node, Model: s.Model, Created: s.Created, AccountHash: s.AccountHash})
 		}
 	}
 	if len(data.States) == 0 {
@@ -93,7 +94,7 @@ func importStates(s *Store, c *Config, path string, usable bool) (int, int, erro
 		return 0, 0, err
 	}
 	var data stateFile
-	if json.Unmarshal(b, &data) != nil || data.Format != stateFileFormat || data.Version != 1 || data.States == nil {
+	if json.Unmarshal(b, &data) != nil || data.Format != stateFileFormat || data.Version != stateFileVersion || data.States == nil {
 		return 0, 0, errors.New(uiText(c.Language, "无效的 Ritalin 状态文件"))
 	}
 	next := clone(*c)

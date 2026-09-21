@@ -49,6 +49,16 @@ func TestStateFileRoundTrip(t *testing.T) {
 			if !strings.Contains(string(data), source.Value) {
 				t.Fatal("export must include the complete turn-state")
 			}
+			var wire struct {
+				Version int              `json:"version"`
+				States  []map[string]any `json:"states"`
+			}
+			if err := json.Unmarshal(data, &wire); err != nil || wire.Version != 2 || len(wire.States) != 1 {
+				t.Fatal("unexpected export format", err)
+			}
+			if wire.States[0]["x-codex-turn-state"] != source.Value || wire.States[0]["value"] != nil {
+				t.Fatal("both pages must export the full state under x-codex-turn-state")
+			}
 			for _, forbidden := range []string{"auth_home", "HTML", "html", "png", "active", "credential-home", "hidden-password", "browser_no_sandbox"} {
 				if strings.Contains(string(data), forbidden) {
 					t.Fatalf("non-portable field exported: %s", forbidden)
@@ -92,9 +102,11 @@ func TestStateFileRoundTrip(t *testing.T) {
 func TestInvalidStateImportIsAtomic(t *testing.T) {
 	m := transferFixture(t)
 	for _, input := range []string{
-		`{`, `{"format":"wrong","version":1,"states":[]}`,
-		`{"format":"codex-ritalin/states","version":2,"states":[]}`,
-		`{"format":"codex-ritalin/states","version":1,"states":[{"value":"` + syntheticState() + `"},{"value":"secret-invalid-value"}]}`,
+		`{`, `{"format":"wrong","version":2,"states":[]}`,
+		`{"format":"codex-ritalin/states","version":1,"states":[{"value":"` + syntheticState() + `"}]}`,
+		`{"format":"codex-ritalin/states","version":3,"states":[]}`,
+		`{"format":"codex-ritalin/states","version":2,"states":[{"value":"` + syntheticState() + `"}]}`,
+		`{"format":"codex-ritalin/states","version":2,"states":[{"x-codex-turn-state":"` + syntheticState() + `"},{"x-codex-turn-state":"secret-invalid-value"}]}`,
 	} {
 		path := filepath.Join(t.TempDir(), "invalid.json")
 		if err := atomicWrite(path, []byte(input), 0600); err != nil {
@@ -128,7 +140,7 @@ func TestStateImportDeduplicatesWithinFile(t *testing.T) {
 	m := transferFixture(t)
 	c := Defaults()
 	path := filepath.Join(t.TempDir(), "states.json")
-	data := stateFile{Format: stateFileFormat, Version: 1, States: []portableState{
+	data := stateFile{Format: stateFileFormat, Version: stateFileVersion, States: []portableState{
 		{Value: syntheticState()}, {Value: strings.TrimRight(syntheticState(), "=")},
 	}}
 	b, _ := json.Marshal(data)
