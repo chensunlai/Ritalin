@@ -40,6 +40,7 @@ func startTestWarp(ctx context.Context, s *Store, c Config, state *State, emit E
 	// Tests use the candidate's source (or its explicit imported binding),
 	// independently of the active state's connection mode and replacement toggle.
 	c.UseNode, c.Replace = true, true
+	c.UseForceState = c.TestForceState
 	candidate := *state
 	candidate.UseNodeID = n.ID
 	emit(fmt.Sprintf(uiText(c.Language, "测试节点：%s"), safeText(n.Name)))
@@ -73,7 +74,7 @@ func startUseWarpObserved(ctx context.Context, s *Store, c Config, state *State,
 			return nil, nil, errors.New(uiText(c.Language, "节点没有可用的代理地址"))
 		}
 	}
-	w, err := startWarpObserved(s, state.Value, c.Replace, upstream, observe)
+	w, err := startWarpObserved(s, state.Value, c.Replace, c.UseForceState, upstream, observe)
 	if err != nil {
 		run.Close()
 		return nil, nil, err

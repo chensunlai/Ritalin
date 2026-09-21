@@ -144,6 +144,14 @@ func (m *ui) entryLabel(e entry) string {
 	return m.t(e.label)
 }
 
+func forceStateEntry(enabled bool, page string) entry {
+	label := "强制写入 state：关"
+	if enabled {
+		label = "强制写入 state：开"
+	}
+	return entry{label, "force-state", page}
+}
+
 func (m *ui) flowHint() string {
 	if m.routeState != "" {
 		return m.t("选择检测通过的节点，Esc 返回。")
@@ -300,6 +308,8 @@ func (m *ui) detailBody(width int) string {
 	}
 	text, value := "", ""
 	switch e.action {
+	case "force-state":
+		text = "开启后，目标请求和响应即使没有 x-codex-turn-state 也会写入；关闭时仅替换已有字段。"
 	case "route-mode":
 		text = "默认连接使用当前网络设置；代理节点使用为状态指定的节点。"
 	case "route-node":

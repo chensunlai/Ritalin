@@ -61,6 +61,8 @@ type Config struct {
 	Mihomo           string   `json:"mihomo_path,omitempty"`
 	Upstream         string   `json:"warp_upstream,omitempty"`
 	UseNode          bool     `json:"use_node,omitempty"`
+	UseForceState    bool     `json:"use_force_state"`
+	TestForceState   bool     `json:"test_force_state"`
 	Replace          bool     `json:"replace"`
 	KeywordFilter    bool     `json:"keyword_filter"`
 	Active           string   `json:"active_state,omitempty"`

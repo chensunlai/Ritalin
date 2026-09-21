@@ -31,7 +31,7 @@ func TestReplaceExistingState(t *testing.T) {
 		{http.CanonicalHeaderKey(stateHeader): {"original"}},
 	} {
 		_, exists := initial[http.CanonicalHeaderKey(stateHeader)]
-		replaceExistingState(initial, syntheticState())
+		replaceState(initial, syntheticState(), false)
 		if got, present := initial[http.CanonicalHeaderKey(stateHeader)]; present != exists || (present && got[0] != syntheticState()) {
 			t.Fatalf("existing=%v, result=%v", exists, initial)
 		}
@@ -50,7 +50,7 @@ func TestWarpMissingHeadersStayMissing(t *testing.T) {
 	}))
 	defer origin.Close()
 	observed := make(chan warpStateEvent, 2)
-	warp, err := startWarpObserved(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(e warpStateEvent) { observed <- e })
+	warp, err := startWarpObserved(&Store{Root: t.TempDir()}, syntheticState(), true, false, "", func(e warpStateEvent) { observed <- e })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 			defer up.Close()
 			store := &Store{Root: t.TempDir()}
 			observed := make(chan warpStateEvent, 2)
-			warp, e := startWarpObserved(store, syntheticState(), enabled, up.URL, func(e warpStateEvent) { observed <- e })
+			warp, e := startWarpObserved(store, syntheticState(), enabled, false, up.URL, func(e warpStateEvent) { observed <- e })
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -192,6 +192,14 @@ func TestWarpHTTPSUpstreamStreamingAndControl(t *testing.T) {
 	}
 }
 func TestWarpWebSocketUpgrade(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force-missing=%v", force), func(t *testing.T) {
+			testWarpWebSocketUpgrade(t, force)
+		})
+	}
+}
+
+func testWarpWebSocketUpgrade(t *testing.T, force bool) {
 	delta := []byte(`{"type":"response.output_text.delta","delta":"websocket text"}`)
 	origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get(stateHeader) != syntheticState() {
@@ -206,7 +214,10 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 			return
 		}
 		defer conn.Close()
-		fmt.Fprintf(rw, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n%s: server-original\r\n", stateHeader)
+		rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n")
+		if !force {
+			fmt.Fprintf(rw, "%s: server-original\r\n", stateHeader)
+		}
 		for i := 0; i < 24; i++ {
 			fmt.Fprintf(rw, "X-Test-%d: value\r\n", i)
 		}
@@ -216,7 +227,7 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 	}))
 	defer origin.Close()
 	observed := make(chan warpStateEvent, 2)
-	warp, e := startWarpObserved(&Store{Root: t.TempDir()}, syntheticState(), true, "", func(e warpStateEvent) { observed <- e })
+	warp, e := startWarpObserved(&Store{Root: t.TempDir()}, syntheticState(), true, force, "", func(e warpStateEvent) { observed <- e })
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -244,7 +255,11 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 	}
 	client := tls.Client(conn, &tls.Config{RootCAs: pool, ServerName: "chatgpt.com"})
 	defer client.Close()
-	fmt.Fprintf(client, "GET /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAccept-Encoding: gzip\r\nSec-WebSocket-Extensions: permessage-deflate\r\n%s: client-original\r\n\r\n", stateHeader)
+	headers := "GET /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nAccept-Encoding: gzip\r\nSec-WebSocket-Extensions: permessage-deflate\r\n"
+	if !force {
+		headers += stateHeader + ": client-original\r\n"
+	}
+	fmt.Fprint(client, headers+"\r\n")
 	var head []byte
 	buffer := make([]byte, 4096)
 	for reads := 1; !bytes.Contains(head, []byte("\r\n\r\n")); reads++ {
@@ -267,8 +282,11 @@ func TestWarpWebSocketUpgrade(t *testing.T) {
 		t.Fatal("upgrade changed or missing replaced header")
 	}
 	requestState, responseState := nextWarpState(t, observed), nextWarpState(t, observed)
-	if len(requestState.Values) != 1 || requestState.Values[0] != syntheticState() || len(responseState.Values) != 1 || responseState.Values[0] != "server-original" || responseState.HTTPStatus != 101 {
+	if len(requestState.Values) != 1 || requestState.Values[0] != syntheticState() || responseState.Present == force || responseState.HTTPStatus != 101 {
 		t.Fatal("WebSocket handshake headers were not observed before response replacement")
+	}
+	if !force && (len(responseState.Values) != 1 || responseState.Values[0] != "server-original") {
+		t.Fatal("original server state not preserved")
 	}
 	b, e := io.ReadAll(io.MultiReader(bytes.NewReader(head[end:]), client))
 	if e != nil {

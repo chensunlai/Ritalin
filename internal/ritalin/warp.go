@@ -108,12 +108,12 @@ func targetRequest(r *http.Request) bool {
 
 // System upstream is chosen before overriding the child environment.
 func startWarp(s *Store, value string, replace bool, upstream string) (*Warp, error) {
-	return startWarpObserved(s, value, replace, upstream, nil)
+	return startWarpObserved(s, value, replace, false, upstream, nil)
 }
 
 // observe only sees the outbound request header and the unmodified server
 // response header. It must not read bodies or change the supplied headers.
-func startWarpObserved(s *Store, value string, replace bool, upstream string, observe func(warpStateEvent)) (*Warp, error) {
+func startWarpObserved(s *Store, value string, replace, force bool, upstream string, observe func(warpStateEvent)) (*Warp, error) {
 	if value != "" {
 		if _, e := parseState(value); e != nil {
 			return nil, e
@@ -176,7 +176,7 @@ func startWarpObserved(s *Store, value string, replace bool, upstream string, ob
 	})
 	p.OnRequest().DoFunc(func(r *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		if replace && value != "" && targetRequest(r) {
-			replaceExistingState(r.Header, value)
+			replaceState(r.Header, value, force)
 		}
 		if observe != nil && targetRequest(r) {
 			observe(newWarpStateEvent(ctx.Session, r, nil, false))
@@ -188,7 +188,7 @@ func startWarpObserved(s *Store, value string, replace bool, upstream string, ob
 			observe(newWarpStateEvent(ctx.Session, ctx.Req, r, true))
 		}
 		if r != nil && replace && value != "" && targetRequest(ctx.Req) {
-			replaceExistingState(r.Header, value)
+			replaceState(r.Header, value, force)
 		}
 		return r
 	})
@@ -202,8 +202,8 @@ func startWarpObserved(s *Store, value string, replace bool, upstream string, ob
 	go server.Serve(tl)
 	return w, nil
 }
-func replaceExistingState(header http.Header, value string) {
-	if _, exists := header[http.CanonicalHeaderKey(stateHeader)]; exists {
+func replaceState(header http.Header, value string, force bool) {
+	if _, exists := header[http.CanonicalHeaderKey(stateHeader)]; exists || force {
 		header.Set(stateHeader, value)
 	}
 }

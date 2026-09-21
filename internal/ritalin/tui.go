@@ -204,6 +204,7 @@ func (m *ui) entries() []entry {
 			out = append(out, entry{"下一步：使用 →", "next", "use"})
 		}
 		out = append(out, entry{"导入…", "import-states", "pending"}, entry{"导出…", "export-states", "pending"})
+		out = append(out, forceStateEntry(m.c.TestForceState, "test"))
 		for _, s := range m.c.States {
 			if s.Status != "usable" {
 				out = append(out, entry{m.stateLabel(s) + "  · " + m.stateStatus(s.Status), "trial", s.ID})
@@ -219,6 +220,7 @@ func (m *ui) entries() []entry {
 			mode = "连接方式：代理节点"
 		}
 		out = append(out, entry{mode, "route-mode", ""})
+		out = append(out, forceStateEntry(m.c.UseForceState, "use"))
 		if m.c.UseNode && findState(&m.c, m.c.Active) != nil {
 			out = append(out, entry{"选择使用节点…", "route-node", m.c.Active})
 		}
@@ -488,6 +490,15 @@ func (m *ui) activate(e entry) tea.Cmd {
 		return m.beginTrial(e.id)
 	case "manual":
 		return m.openForm("manual", "粘贴 x-codex-turn-state", "")
+	case "force-state":
+		flag := &m.c.UseForceState
+		if e.id == "test" {
+			flag = &m.c.TestForceState
+		}
+		*flag = !*flag
+		if !m.save() {
+			*flag = !*flag
+		}
 	case "route-mode":
 		if !m.c.UseNode {
 			if state := findState(&m.c, m.c.Active); state != nil && useNode(&m.c, state) == nil {

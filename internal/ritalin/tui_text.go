@@ -2,6 +2,9 @@ package ritalin
 
 // Only interface text is translated. Node names and model output stay intact.
 var englishUI = map[string]string{
+	"强制写入 state：关": "Force state header: Off",
+	"强制写入 state：开": "Force state header: On",
+	"开启后，目标请求和响应即使没有 x-codex-turn-state 也会写入；关闭时仅替换已有字段。": "On: also add x-codex-turn-state when missing from target requests or responses. Off: replace existing headers only.",
 	"测试节点":    "Test node",
 	"测试节点：%s": "Test node: %s",
 	"请先为此候选选择检测通过的节点":           "Choose a checked node for this candidate first.",
